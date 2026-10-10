@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HandMaus – Anleitung</title>
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#121722; --panel2:#171d2b; --line:#232b3d; --text:#e7ecf5; --muted:#8e9ab3;
+    --blue:#35a8ff; --green:#2ecc71; --orange:#ff9f1c; --purple:#b06bff; --red:#ff4d4d; --grey:#7f8c8d;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);line-height:1.6;
+    font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;font-size:16px}
+  a{color:var(--blue);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:980px;margin:0 auto;padding:0 24px}
+
+  header{position:relative;overflow:hidden;border-bottom:1px solid var(--line);
+    background:radial-gradient(900px 380px at 15% -10%,rgba(53,168,255,.22),transparent 60%),
+               radial-gradient(700px 340px at 95% 0%,rgba(176,107,255,.18),transparent 60%)}
+  .hero{padding:64px 0 48px}
+  .badge{display:inline-block;padding:4px 12px;border:1px solid var(--line);border-radius:999px;
+    font-size:13px;color:var(--muted);background:rgba(255,255,255,.03)}
+  h1{margin:16px 0 8px;font-size:clamp(38px,6vw,60px);line-height:1.05;letter-spacing:-.02em;font-weight:700}
+  h1 span{background:linear-gradient(90deg,var(--blue),var(--purple));-webkit-background-clip:text;
+    background-clip:text;color:transparent}
+  .lead{max-width:640px;font-size:19px;color:#c3cce0;margin:0 0 24px}
+  nav{display:flex;flex-wrap:wrap;gap:8px}
+  nav a{padding:7px 14px;border-radius:999px;background:var(--panel);border:1px solid var(--line);
+    color:var(--text);font-size:14px}
+  nav a:hover{border-color:var(--blue);text-decoration:none}
+
+  section{padding:48px 0 8px}
+  h2{font-size:26px;letter-spacing:-.01em;margin:0 0 6px}
+  .sub{color:var(--muted);margin:0 0 22px;max-width:680px}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px}
+  .card h3{margin:0 0 4px;font-size:17px}
+  .card p{margin:0;color:var(--muted);font-size:15px}
+
+  .step{display:flex;gap:16px;align-items:flex-start}
+  .num{flex:0 0 36px;height:36px;border-radius:12px;display:grid;place-items:center;font-weight:700;
+    background:linear-gradient(135deg,var(--blue),var(--purple));color:#06101c}
+
+  .gesture{display:flex;gap:16px;align-items:center}
+  .gesture svg{flex:0 0 96px;width:96px;height:96px}
+  .tag{display:inline-block;margin-bottom:6px;padding:2px 10px;border-radius:999px;font-size:12px;
+    font-weight:600;letter-spacing:.03em;color:#06101c}
+
+  .dot{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:-2px;margin-right:8px}
+  .ring{display:inline-block;width:18px;height:18px;border-radius:50%;border:3px solid;vertical-align:-4px;margin-right:8px}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;overflow:hidden}
+  th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px;vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:13px;letter-spacing:.05em;text-transform:uppercase;background:var(--panel2)}
+  tr:last-child td{border-bottom:0}
+  td:first-child{white-space:nowrap;font-weight:600}
+  kbd{padding:2px 8px;border-radius:6px;border:1px solid #33405c;border-bottom-width:2px;background:var(--panel2);
+    font:600 13px "Cascadia Mono",Consolas,monospace}
+  .note{border-left:3px solid var(--blue);background:var(--panel);padding:14px 18px;border-radius:0 12px 12px 0;
+    color:#c3cce0;margin-top:14px}
+  .note.warn{border-color:var(--orange)}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:10px}
+  summary{cursor:pointer;font-weight:600}
+  details p{color:var(--muted);margin:10px 0 0}
+  ul{margin:8px 0 0;padding-left:20px;color:var(--muted)}
+  li{margin:4px 0}
+  footer{margin-top:56px;padding:28px 0 48px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap hero">
+    <span class="badge">Anleitung · läuft unsichtbar im Hintergrund</span>
+    <h1>Hand<span>Maus</span></h1>
+    <p class="lead">Steuere deinen Mauszeiger berührungslos mit einer Hand vor der Webcam – in jedem Programm
+      und auf jeder Website. Kein Fenster, kein Kamerabild, nur ein kleines Hand-Symbol unten rechts.</p>
+    <nav>
+      <a href="#start">Schnellstart</a><a href="#gesten">Gesten</a><a href="#ring">Der Ring</a>
+      <a href="#stopp">Stoppen &amp; Pause</a><a href="#symbol">Hand-Symbol &amp; Einstellungen</a>
+      <a href="#tipps">Tipps</a><a href="#hilfe">Probleme lösen</a><a href="#daten">Datenschutz</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="start">
+  <h2>Schnellstart</h2>
+  <p class="sub">HandMaus läuft bereits. In vier Schritten hast du den Zeiger in der Hand.</p>
+  <div class="grid g2">
+    <div class="card step"><div class="num">1</div><div><h3>Hand-Symbol finden</h3>
+      <p>Unten rechts in der Taskleiste, eventuell hinter dem Pfeil <kbd>^</kbd>. Blau heißt: HandMaus sucht deine Hand.</p></div></div>
+    <div class="card step"><div class="num">2</div><div><h3>Hand in die Kamera halten</h3>
+      <p>Offene Hand, Handfläche zur Kamera, etwa 40–80 cm entfernt. Das Symbol wird grün und um den Zeiger erscheint ein blauer Ring.</p></div></div>
+    <div class="card step"><div class="num">3</div><div><h3>Bewegen</h3>
+      <p>Bewege die ganze Hand – der Zeiger folgt. Du musst nicht weit ausholen: ein kleiner Bereich vor der Kamera deckt den ganzen Bildschirm ab.</p></div></div>
+    <div class="card step"><div class="num">4</div><div><h3>Klicken</h3>
+      <p>Tippe Daumen und Zeigefinger kurz zusammen. Der Ring wird grün – das war ein Linksklick.</p></div></div>
+  </div>
+</section>
+
+<section id="gesten">
+  <h2>Gesten</h2>
+  <p class="sub">Das Prinzip ist immer gleich: Der Daumen berührt einen Finger. Welcher Finger, bestimmt die Aktion.</p>
+  <div class="grid g2" id="gestures"></div>
+  <div class="note">Beim Klicken bleibt der Zeiger kurz stehen, damit der Klick nicht verrutscht. Erst wenn du die Hand
+    bei geschlossenen Fingern deutlich bewegst, beginnt das Ziehen. Für einen Doppelklick einfach zweimal kurz tippen.</div>
+</section>
+
+<section id="ring">
+  <h2>Der Ring um den Zeiger</h2>
+  <p class="sub">Der Ring zeigt dir jederzeit, wo der Zeiger ist und was HandMaus gerade erkennt.</p>
+  <div class="grid g3">
+    <div class="card"><h3><span class="ring" style="border-color:var(--blue)"></span>Blau</h3><p>Hand erkannt, der Zeiger folgt.</p></div>
+    <div class="card"><h3><span class="ring" style="border-color:var(--green)"></span>Grün</h3><p>Linke Maustaste gedrückt (Klick oder Ziehen).</p></div>
+    <div class="card"><h3><span class="ring" style="border-color:var(--orange)"></span>Orange</h3><p>Rechtsklick ausgelöst.</p></div>
+    <div class="card"><h3><span class="ring" style="border-color:var(--purple)"></span>Lila</h3><p>Scroll-Modus: Hand hoch oder runter bewegen.</p></div>
+    <div class="card"><h3><span class="ring" style="border-color:var(--red)"></span>Rot (kurz)</h3><p>Du hast die Steuerung per Geste gestoppt.</p></div>
+    <div class="card"><h3>Kein Ring</h3><p>Keine Hand im Bild, gestoppt, pausiert – oder du bewegst gerade die echte Maus.</p></div>
+  </div>
+</section>
+
+<section id="stopp">
+  <h2>Stoppen &amp; Pause</h2>
+  <p class="sub">Es gibt zwei Arten, HandMaus anzuhalten – eine mit der Hand, eine mit der Tastatur.</p>
+  <table>
+    <tr><th></th><th>Stoppen per Geste</th><th>Pause</th></tr>
+    <tr><td>Auslösen</td><td>Hand 3× schnell zur Faust schließen und wieder öffnen (innerhalb von 2 Sekunden)</td>
+      <td><kbd>Strg</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> oder Linksklick auf das Hand-Symbol</td></tr>
+    <tr><td>Rückmeldung</td><td>Kurzer Ton, Ring blitzt rot, Symbol wird rot</td><td>Symbol wird grau</td></tr>
+    <tr><td>Kamera</td><td>bleibt an – sonst könnte die Geste nicht wieder einschalten</td><td>ist aus</td></tr>
+    <tr><td>Fortsetzen</td><td>dieselbe Geste noch einmal</td><td>dieselbe Tastenkombination oder Klick</td></tr>
+  </table>
+  <div class="note">Die echte Maus hat immer Vorrang: Sobald du sie bewegst, lässt HandMaus den Zeiger für eine Sekunde los.</div>
+</section>
+
+<section id="symbol">
+  <h2>Hand-Symbol &amp; Einstellungen</h2>
+  <p class="sub">Die Farbe des Symbols im Infobereich zeigt den Zustand. Ein Rechtsklick öffnet die Einstellungen.</p>
+  <div class="grid g3" style="margin-bottom:14px">
+    <div class="card"><h3><span class="dot" style="background:var(--green)"></span>Grün</h3><p>Hand erkannt</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--blue)"></span>Blau</h3><p>sucht eine Hand</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--red)"></span>Rot</h3><p>per Geste gestoppt</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--grey)"></span>Grau</h3><p>Pause, Kamera aus</p></div>
+    <div class="card"><h3><span class="dot" style="background:var(--orange)"></span>Orange</h3><p>keine Kamera gefunden</p></div>
+  </div>
+  <table>
+    <tr><th>Menüpunkt</th><th>Was er macht</th></tr>
+    <tr><td>Aktiv</td><td>Pause ein/aus (wie <kbd>Strg</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd>).</td></tr>
+    <tr><td>Hand</td><td>Automatisch, rechte oder linke Hand. HandMaus verfolgt immer nur eine Hand und springt nicht zur anderen.
+      Wenn öfter die falsche Hand genommen wird, stelle hier deine Hand fest ein.</td></tr>
+    <tr><td>Steuerzone</td><td>Der Bereich im Kamerabild, in dem du die Hand bewegst. Mit „Unten“ oder „Rechts unten“ liegt die Hand
+      entspannt neben der Tastatur und verdeckt den Bildschirm nicht.</td></tr>
+    <tr><td>Bewegung</td><td>Groß = weite Handbewegung für den ganzen Bildschirm (genauer). Klein = kurze Handbewegung (schneller, weniger anstrengend).</td></tr>
+    <tr><td>Kamera</td><td>Auswahl, falls mehrere Kameras angeschlossen sind.</td></tr>
+    <tr><td>Ring um den Mauszeiger</td><td>Den farbigen Ring ein- oder ausblenden.</td></tr>
+    <tr><td>Anleitung öffnen</td><td>Öffnet diese Seite wieder.</td></tr>
+    <tr><td>Mit Windows starten</td><td>Startet HandMaus automatisch bei jeder Anmeldung.</td></tr>
+    <tr><td>Beenden</td><td>Schließt HandMaus und gibt die Kamera frei.</td></tr>
+  </table>
+</section>
+
+<section id="tipps">
+  <h2>Tipps für eine präzise Steuerung</h2>
+  <div class="grid g2">
+    <div class="card"><h3>Licht</h3><p>Helles, gleichmäßiges Licht von vorn. Bei wenig Licht liefert die Kamera weniger Bilder und der Zeiger reagiert träger. Ein Fenster im Rücken blendet die Kamera.</p></div>
+    <div class="card"><h3>Abstand &amp; Haltung</h3><p>40–80 cm vor der Kamera, Handfläche ungefähr zur Kamera. Stütze den Ellbogen auf dem Tisch ab – das ist ruhiger und ermüdet nicht.</p></div>
+    <div class="card"><h3>Aus dem Handgelenk</h3><p>Der Zeiger folgt der Handfläche, nicht den Fingerspitzen. Bewege die ganze Hand; die Finger kannst du frei zum Klicken nutzen.</p></div>
+    <div class="card"><h3>Kleine Ziele treffen</h3><p>Zeiger hinbewegen, Hand kurz ruhig halten, dann tippen. Für sehr kleine Schaltflächen hilft die Einstellung „Bewegung: Groß“.</p></div>
+    <div class="card"><h3>Finger deutlich trennen</h3><p>Nach einem Klick die Finger wieder klar öffnen. Halte die anderen Finger locker gestreckt, damit HandMaus den richtigen Finger erkennt.</p></div>
+    <div class="card"><h3>Nur eine Hand</h3><p>Die zweite Hand wird ignoriert. Verschwindet deine Steuerhand kurz, wartet HandMaus auf sie, statt zur anderen zu wechseln.</p></div>
+  </div>
+</section>
+
+<section id="hilfe">
+  <h2>Probleme lösen</h2>
+  <details><summary>Das Symbol ist orange – „keine Kamera gefunden“</summary>
+    <p>Eine andere App benutzt die Kamera (Videoanruf, Browser-Tab, Kamera-App) oder der Kamera-Schieber am Laptop ist zu.
+      Schließe die andere App. Wenn du mehrere Kameras hast: Rechtsklick auf das Symbol → Kamera → andere auswählen.
+      Prüfe außerdem in Windows unter Einstellungen → Datenschutz → Kamera, ob Desktop-Apps die Kamera benutzen dürfen.</p></details>
+  <details><summary>Die Hand wird nicht erkannt (Symbol bleibt blau)</summary>
+    <p>Halte die offene Hand mit der Handfläche zur Kamera ganz ins Bild, sorge für mehr Licht und einen ruhigen Hintergrund.
+      Wenn unter „Hand“ rechts oder links fest eingestellt ist, wird nur diese Hand angenommen – stelle testweise „Automatisch“ ein.</p></details>
+  <details><summary>Der Zeiger ruckelt oder reagiert verzögert</summary>
+    <p>Meist liegt es am Licht: Bei Dunkelheit senkt die Kamera die Bildrate. Schließe außerdem rechenintensive Programme –
+      die Hand-Erkennung braucht etwas Prozessorleistung. Laptop am Netzteil betreiben hilft ebenfalls.</p></details>
+  <details><summary>Es wird geklickt, obwohl ich nicht klicken wollte</summary>
+    <p>Halte die Finger beim Bewegen locker geöffnet, sodass kein Finger den Daumen berührt. Eine Faust löst keinen Klick aus.
+      Brauchst du kurz Ruhe, stoppe mit 3× Faust oder <kbd>Strg</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd>.</p></details>
+  <details><summary>Die Stopp-Geste wird nicht erkannt</summary>
+    <p>Öffne die Hand jedes Mal ganz (alle Finger gestreckt) und schließe sie ganz zur Faust, dreimal zügig hintereinander
+      innerhalb von etwa 2 Sekunden, mit der Handfläche zur Kamera.</p></details>
+  <details><summary>In manchen Fenstern reagiert die Maus nicht</summary>
+    <p>Programme, die „als Administrator“ laufen (z. B. Task-Manager, Installationsfenster), nehmen aus Sicherheitsgründen
+      keine Eingaben von normalen Programmen an. Benutze dort die echte Maus.</p></details>
+  <details><summary>Windows warnt beim Start („Der Computer wurde durch Windows geschützt“)</summary>
+    <p>Die Datei ist nicht digital signiert. Klicke auf „Weitere Informationen“ und dann „Trotzdem ausführen“.</p></details>
+  <details><summary>HandMaus beenden oder deinstallieren</summary>
+    <p>Rechtsklick auf das Hand-Symbol → Beenden. Zum Entfernen „Mit Windows starten“ ausschalten und die Datei
+      <code>HandMaus.exe</code> löschen. Die Einstellungen liegen in <code>%APPDATA%\HandMaus</code>.</p></details>
+</section>
+
+<section id="daten">
+  <h2>Datenschutz</h2>
+  <div class="card"><p>Das Kamerabild wird ausschließlich auf deinem Computer im Arbeitsspeicher ausgewertet. Es wird nie angezeigt,
+    nie gespeichert und nie über das Internet verschickt – HandMaus stellt gar keine Internetverbindung her.
+    In der Pause und nach dem Beenden ist die Kamera aus.</p></div>
+</section>
+
+</main>
+
+<footer><div class="wrap">Diese Anleitung öffnest du jederzeit wieder: Rechtsklick auf das Hand-Symbol → „Anleitung öffnen“.</div></footer>
+
+<script>
+// Hand-Piktogramme: Fingerspitzen als Punkte, der Daumen berührt den hervorgehobenen Finger
+const TIPS = { thumb: [20, 62], index: [38, 22], middle: [58, 14], ring: [78, 22], pinky: [94, 40] };
+const PALM = [58, 78];
+function hand(active, color, opts = {}) {
+  const fist = opts.fist, parts = [];
+  for (const [name, [x, y]] of Object.entries(TIPS)) {
+    const on = active.includes(name);
+    let tx = x, ty = y;
+    if (fist) { tx = PALM[0] + (x - PALM[0]) * .45; ty = PALM[1] + (y - PALM[1]) * .45; }
+    else if (on && name !== 'thumb') { tx = (x + TIPS.thumb[0] + 14) / 2; ty = (y + TIPS.thumb[1] - 6) / 2; }
+    else if (on && active.length > 1) { tx = x + 8; ty = y - 6; }
+    parts.push(`<line x1="${PALM[0]}" y1="${PALM[1]}" x2="${tx}" y2="${ty}" stroke="${on ? color : '#3a455e'}" stroke-width="11" stroke-linecap="round"/>`);
+    parts.push(`<circle cx="${tx}" cy="${ty}" r="6.5" fill="${on ? '#fff' : '#566381'}"/>`);
+  }
+  parts.push(`<ellipse cx="${PALM[0]}" cy="${PALM[1] + 6}" rx="26" ry="20" fill="#2a3349"/>`);
+  if (opts.arrows === 'all') parts.push(`<path d="M58 106 l-6 -6 M58 106 l6 -6 M8 78 l6 -6 M8 78 l6 6 M108 78 l-6 -6 M108 78 l-6 6" stroke="${color}" stroke-width="2.5" stroke-linecap="round" fill="none"/>`);
+  if (opts.arrows === 'updown') parts.push(`<path d="M108 30 v44 M108 30 l-6 7 M108 30 l6 7 M108 74 l-6 -7 M108 74 l6 -7" stroke="${color}" stroke-width="2.5" stroke-linecap="round" fill="none"/>`);
+  if (opts.label) parts.push(`<text x="104" y="24" fill="${color}" font-size="17" font-weight="700" text-anchor="middle" font-family="Segoe UI,sans-serif">${opts.label}</text>`);
+  return `<svg viewBox="0 0 118 112" aria-hidden="true">${parts.join('')}</svg>`;
+}
+const G = [
+  ['Bewegen', '#35a8ff', 'Zeiger bewegen', 'Offene Hand bewegen – der Zeiger folgt deiner Handfläche.', hand([], '#35a8ff', { arrows: 'all' })],
+  ['Linksklick', '#2ecc71', 'Daumen + Zeigefinger', 'Kurz zusammentippen = Klick. Zweimal tippen = Doppelklick.', hand(['thumb', 'index'], '#2ecc71')],
+  ['Linksklick', '#2ecc71', 'Daumen + Mittelfinger', 'Funktioniert genauso wie mit dem Zeigefinger – nimm, was bequemer ist.', hand(['thumb', 'middle'], '#2ecc71')],
+  ['Ziehen', '#2ecc71', 'Zusammenhalten + bewegen', 'Finger geschlossen halten und die Hand bewegen: Fenster verschieben, Text markieren, Regler ziehen.', hand(['thumb', 'index'], '#2ecc71', { arrows: 'all' })],
+  ['Scrollen', '#b06bff', 'Daumen + Ringfinger halten', 'Geschlossen halten und die Hand hoch oder runter bewegen. Loslassen beendet das Scrollen.', hand(['thumb', 'ring'], '#b06bff', { arrows: 'updown' })],
+  ['Rechtsklick', '#ff9f1c', 'Daumen + kleiner Finger', 'Einmal zusammentippen öffnet das Kontextmenü an der Zeigerposition.', hand(['thumb', 'pinky'], '#ff9f1c')],
+  ['Stopp / Weiter', '#ff4d4d', 'Hand 3× zu und auf', 'Dreimal schnell zur Faust schließen und öffnen schaltet die Steuerung aus – und genauso wieder ein.', hand(['thumb', 'index', 'middle', 'ring', 'pinky'], '#ff4d4d', { fist: true, label: '3×' })],
+];
+document.getElementById('gestures').innerHTML = G.map(([tag, color, title, text, svg]) =>
+  `<div class="card gesture">${svg}<div><span class="tag" style="background:${color}">${tag}</span><h3>${title}</h3><p>${text}</p></div></div>`).join('');
+</script>
+</body>
+</html>

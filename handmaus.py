@@ -9,6 +9,7 @@ from ctypes import wintypes
 import json
 import math
 import os
+import shutil
 import sys
 import threading
 import time
@@ -24,21 +25,6 @@ BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 MODEL_FILE = os.path.join(BASE_DIR, 'hand_landmarker.task')
 CONFIG_DIR = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), APP)
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
-
-HELP_TEXT = (
-    'Hand bewegen  →  Mauszeiger bewegen\n'
-    'Daumen + Zeigefinger ODER Daumen + Mittelfinger kurz zusammen  →  Linksklick\n'
-    'Zusammenhalten und Hand bewegen  →  Ziehen / Markieren\n'
-    'Daumen + Ringfinger halten, Hand hoch/runter  →  Scrollen\n'
-    'Daumen + kleiner Finger zusammen  →  Rechtsklick\n\n'
-    'Der Ring um den Mauszeiger zeigt den Zustand:\n'
-    'Blau = Zeiger, Grün = Linksklick, Orange = Rechtsklick, Lila = Scrollen\n\n'
-    'Hand 3× schnell zu- und aufmachen  →  Steuerung stoppen / fortsetzen (Ton + roter Ring)\n'
-    'Strg + Alt + H  →  Pause / Weiter (Kamera aus)\n'
-    'Bewegst du die echte Maus, lässt HandMaus den Zeiger kurz los.\n\n'
-    'Einstellungen: Rechtsklick auf das Hand-Symbol im Infobereich.\n'
-    'In der Pause ist die Kamera ausgeschaltet.'
-)
 
 # Steuerzone im gespiegelten Kamerabild (0..1): Mittelpunkt je Voreinstellung, Kantenlänge je Bewegungsgröße
 ZONES = {'mitte': (.5, .5), 'unten': (.5, .75), 'links': (.25, .5), 'rechts': (.75, .5),
@@ -140,7 +126,6 @@ def zone_rect():
 PINCH_ON, PINCH_OFF = .30, .48  # Abstand Daumen–Fingerspitze relativ zur Handgröße
 DRAG_START = .035               # so weit muss sich die Hand beim Halten bewegen, bevor gezogen wird
 GRACE = .25                     # so lange darf die Hand kurz verschwinden, ohne dass losgelassen wird
-LEAD = .02                      # Sekunden, die der Zeiger der Handbewegung vorausschaut
 PUMP_WINDOW = 2.0               # in dieser Zeit muss die Hand dreimal zur Faust geschlossen werden
 
 
@@ -150,19 +135,102 @@ def beep(stopped):
     threading.Thread(target=lambda: [winsound.Beep(f, ms) for f, ms in tones], daemon=True).start()
 
 
+class Mover(threading.Thread):
+    """Führt den Zeiger rund 200-mal pro Sekunde auf einer glatten Bahn.
+
+    Die Kamera liefert nur etwa 30 Positionen pro Sekunde. Würde der Zeiger nur dann gesetzt, spränge er
+    bei schnellen Bewegungen in sichtbaren Stufen. Stattdessen wird aus den letzten Positionen die
+    Geschwindigkeit der Hand bestimmt, die Bahn bis zum nächsten Kamerabild vorausberechnet und der
+    Zeiger in vielen kleinen Schritten daran entlanggeführt.
+    """
+    TAU = .018       # Sekunden: wie weich der Zeiger der berechneten Bahn folgt
+    MAX_AHEAD = .05  # länger als das wird nie vorausgerechnet (z. B. wenn ein Kamerabild ausfällt)
+
+    def __init__(self, threaded=True):
+        super().__init__(daemon=True)
+        self.threaded = threaded  # False im Test: jede Position sofort und exakt setzen
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.active = False
+        self.target = self.cur = self.sent = self.last_seen = None
+        self.vel = (0.0, 0.0)
+        self.t_aim = self.t_tick = self.yield_until = 0.0
+        self.frame_dt = .033
+
+    def aim(self, pos, now, snap=False):
+        """Neue Zielposition (0..1) aus einem Kamerabild; snap setzt den Zeiger sofort exakt (für Klicks)."""
+        w, h = screen_size()
+        tx, ty = pos[0] * (w - 1), pos[1] * (h - 1)
+        with self.lock:
+            dt = now - self.t_aim
+            if snap or not self.active or self.target is None or not 0 < dt < .2:
+                self.vel = (0.0, 0.0)
+            else:
+                self.vel, self.frame_dt = ((tx - self.target[0]) / dt, (ty - self.target[1]) / dt), dt
+            self.target, self.t_aim, self.active = (tx, ty), now, True
+            if snap or not self.threaded:
+                self._tick(now, direct=True)
+
+    def idle(self):
+        with self.lock:
+            self.active, self.target, self.sent = False, None, None
+
+    def yielding(self):
+        return time.perf_counter() < self.yield_until
+
+    def _tick(self, now, direct=False):
+        if not self.active or self.target is None:
+            return
+        here = cursor_pos()
+        if now < self.yield_until:  # solange die echte Maus weiterbewegt wird, weiter warten
+            if here != self.last_seen:
+                self.yield_until = now + 1.0
+            self.last_seen = here
+            return
+        # Steht der Zeiger nicht dort, wo wir ihn hingesetzt haben, hat jemand die echte Maus bewegt
+        if self.sent and abs(here[0] - self.sent[0]) + abs(here[1] - self.sent[1]) > 8:
+            self.yield_until, self.sent, self.last_seen = now + 1.0, None, here
+            return
+        if direct:
+            self.cur = self.target
+        else:
+            if self.sent is None or self.cur is None:  # neu übernommen: von der aktuellen Stelle losgleiten
+                self.cur = (float(here[0]), float(here[1]))
+            ahead = min(max(now - self.t_aim, 0.0), self.frame_dt, self.MAX_AHEAD)
+            goal = (self.target[0] + self.vel[0] * ahead, self.target[1] + self.vel[1] * ahead)
+            k = 1 - math.exp(-max(now - self.t_tick, 0.0) / self.TAU)
+            self.cur = (self.cur[0] + (goal[0] - self.cur[0]) * k, self.cur[1] + (goal[1] - self.cur[1]) * k)
+        self.t_tick = now
+        w, h = screen_size()
+        px = (clamp(round(self.cur[0]), 0, w - 1), clamp(round(self.cur[1]), 0, h - 1))
+        if px != self.sent:
+            move_cursor(*px)
+            self.sent = px
+
+    def run(self):
+        winmm = ctypes.WinDLL('winmm')
+        winmm.timeBeginPeriod(1)  # sonst schläft Windows in 15-ms-Schritten
+        try:
+            while not self.stop_event.is_set():
+                with self.lock:
+                    self._tick(time.perf_counter())
+                time.sleep(.005)
+        finally:
+            winmm.timeEndPeriod(1)
+
+
 class Gestures:
     """Wählt eine Hand aus, bleibt bei ihr und leitet daraus Zeiger, Klicks und Scrollen ab."""
 
-    def __init__(self, act=True):
-        self.act = act  # False im Selbsttest: nichts an die Maus schicken
+    def __init__(self, mover=None):
+        self.mover = mover
+        self.act = mover is not None  # ohne Mover (Selbsttest) nichts an die Maus schicken
         self.lock = None
         self.lock_seen = 0.0
         self.fx, self.fy = OneEuro(), OneEuro()
         self.history = collections.deque(maxlen=20)  # (Zeit, Zeigerposition) der letzten Bilder
         self.pos = (.5, .5)        # Zeigerposition 0..1
         self.offset = (0.0, 0.0)   # Versatz Hand → Zeiger nach einem Klick, klingt wieder ab
-        self.sent_px = self.last_px = None
-        self.yield_until = 0.0     # die echte Maus wurde bewegt: bis dahin nicht eingreifen
         self.t = 0.0
         self.seen = 0.0
         self.stopped = False       # per Geste angehalten: Kamera läuft weiter, die Maus bleibt in Ruhe
@@ -184,6 +252,8 @@ class Gestures:
         if self.left and self.act:
             mouse_event(LEFTUP)
         self._idle()
+        if self.mover:
+            self.mover.idle()
         self.offset = (0.0, 0.0)
         self.history.clear()
         self.fx.reset()
@@ -246,24 +316,9 @@ class Gestures:
         drift = math.hypot(self.pos[0] - old[0], self.pos[1] - old[1])
         return old if drift < .03 else self.pos  # größere Strecke = gewollte Bewegung, nicht zurückspringen
 
-    def _move(self, now):
-        if not self.act:
-            return
-        w, h = screen_size()
-        px = (round(self.pos[0] * (w - 1)), round(self.pos[1] * (h - 1)))
-        here = cursor_pos()
-        if now < self.yield_until:  # solange die echte Maus weiterbewegt wird, weiter warten
-            if here != self.last_px:
-                self.yield_until = now + 1.0
-            self.last_px = here
-            return
-        # Steht der Zeiger nicht dort, wo wir ihn hingesetzt haben, hat jemand die echte Maus bewegt
-        if self.sent_px and abs(here[0] - self.sent_px[0]) + abs(here[1] - self.sent_px[1]) > 8:
-            self.yield_until, self.sent_px, self.last_px = now + 1.0, None, here
-            return
-        if px != self.sent_px:
-            move_cursor(*px)
-            self.sent_px = px
+    def _move(self, now, snap=False):
+        if self.mover:
+            self.mover.aim(self.pos, now, snap)
 
     def update(self, result, now):
         dt, self.t = min(now - self.t, .2), now
@@ -281,6 +336,8 @@ class Gestures:
         closing = abs(sum(curl.values()) - sum(self.curl.values())) / 4 / max(dt, 1e-3) > 2.5 if self.curl else False
         self.curl = curl
         if self.stopped:
+            if self.mover:
+                self.mover.idle()
             return {'stopped': True}
 
         pinch = lambda tip: dist(lm[4], lm[tip]) / size
@@ -295,8 +352,6 @@ class Gestures:
         x0, y0, s = zone_rect()
         hx = self.fx(clamp((hand['c'][0] - x0) / s, 0, 1), now)
         hy = self.fy(clamp((hand['c'][1] - y0) / s, 0, 1), now)
-        # ein kleines Stück vorausschauen gleicht die Verzögerung von Kamera und Erkennung aus
-        hx, hy = clamp(hx + self.fx.dx * LEAD, 0, 1), clamp(hy + self.fy.dx * LEAD, 0, 1)
 
         # Linksklick: Daumen + Zeige- oder Mittelfinger (halten und bewegen = ziehen)
         if self.left:
@@ -307,7 +362,7 @@ class Gestures:
         elif p_left < PINCH_ON and p_left == nearest and not busy and may(left_tip):
             self.left, self.press_at = True, (hx, hy)
             self.pos = self._anchor(now)
-            self._move(now)
+            self._move(now, snap=True)
             if self.act:
                 mouse_event(LEFTDOWN)
 
@@ -318,7 +373,7 @@ class Gestures:
         elif p_right < PINCH_ON and p_right == nearest and not busy and may(20):
             self.right = True
             self.pos = self._anchor(now)
-            self._move(now)
+            self._move(now, snap=True)
             if self.act:
                 mouse_event(RIGHTDOWN)
                 mouse_event(RIGHTUP)
@@ -418,7 +473,8 @@ class Tracker(threading.Thread):
         self.on_status = on_status
         self.paused = False
         self.stop_event = threading.Event()
-        self.gestures = Gestures()
+        self.mover = Mover()
+        self.gestures = Gestures(self.mover)
         self.status = None
 
     def set_status(self, status):
@@ -428,6 +484,7 @@ class Tracker(threading.Thread):
 
     def run(self):
         landmarker = make_landmarker()
+        self.mover.start()
         cap, camera, t0, last_ts, last_hand = None, None, time.perf_counter(), 0, 0.0
         while not self.stop_event.is_set():
             if self.paused or camera != config['camera']:
@@ -471,6 +528,7 @@ class Tracker(threading.Thread):
         if cap:
             cap.close()
         self.gestures.release()
+        self.mover.stop_event.set()
         landmarker.close()
 
 
@@ -489,7 +547,7 @@ class Ring(threading.Thread):
 
     def state(self):
         g = self.tracker.gestures
-        if self.tracker.paused or not config['ring'] or not g.present or g.t < g.yield_until:
+        if self.tracker.paused or not config['ring'] or not g.present or self.tracker.mover.yielding():
             return None
         if g.stopped:  # kurz rot aufleuchten, dann verschwinden
             return 'stop' if g.t - g.toggled < 1.5 else None
@@ -576,8 +634,15 @@ def toggle_autostart():
             winreg.SetValueEx(key, APP, 0, winreg.REG_SZ, f'"{sys.executable}"')
 
 
-def message_box(text):
-    threading.Thread(target=lambda: user32.MessageBoxW(0, text, APP, 0x40), daemon=True).start()
+def open_guide(*_):
+    """Öffnet die Anleitung im Standard-Browser (als Kopie, weil der Programmordner nur temporär ist)."""
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        target = os.path.join(CONFIG_DIR, 'Anleitung.html')
+        shutil.copyfile(os.path.join(BASE_DIR, 'anleitung.html'), target)
+        os.startfile(target)
+    except OSError:
+        pass
 
 
 def hotkey_loop(callback):
@@ -645,7 +710,7 @@ def main():
         pystray.MenuItem('Kamera', radio('camera', {0: 'Kamera 1', 1: 'Kamera 2', 2: 'Kamera 3'})),
         pystray.MenuItem('Ring um den Mauszeiger', toggle_ring, checked=lambda item: config['ring']),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem('Gesten anzeigen', lambda *_: message_box(HELP_TEXT)),
+        pystray.MenuItem('Anleitung öffnen', open_guide),
     ]
     if getattr(sys, 'frozen', False):
         items.append(pystray.MenuItem('Mit Windows starten', lambda *_: toggle_autostart(),
@@ -660,7 +725,7 @@ def main():
         threading.Thread(target=hotkey_loop, args=(toggle_pause,), daemon=True).start()
         if not os.path.exists(CONFIG_FILE):
             save_config()
-            message_box('HandMaus läuft jetzt im Infobereich (Hand-Symbol unten rechts).\n\n' + HELP_TEXT)
+            open_guide()  # beim allerersten Start die Anleitung zeigen
 
     icon.run(setup)
 
@@ -668,7 +733,7 @@ def main():
 def check_image(path, out_file=None):
     """Selbsttest ohne Kamera und ohne Mausbewegung: wertet ein Foto wie ein Kamerabild aus."""
     image = cv2.imread(path)
-    landmarker, gestures = make_landmarker(), Gestures(act=False)
+    landmarker, gestures = make_landmarker(), Gestures()
     rgb = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
     out = None
     for i in range(5):
@@ -684,5 +749,7 @@ def check_image(path, out_file=None):
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == '--check':
         check_image(*sys.argv[2:4])
+    elif sys.argv[1:] == ['--anleitung']:
+        open_guide()
     else:
         main()
