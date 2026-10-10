@@ -18,11 +18,16 @@ noch gespeichert noch verschickt. In der Pause ist die Kamera ausgeschaltet.
 | Geste | Aktion |
 | --- | --- |
 | Hand bewegen | Mauszeiger bewegen |
-| Daumen + Zeigefinger kurz zusammen | Linksklick |
-| Daumen + Zeigefinger halten und bewegen | Ziehen / Markieren |
-| Daumen + Mittelfinger zusammen | Rechtsklick |
-| Zeige- und Mittelfinger gestreckt (✌), Hand hoch/runter | Scrollen |
+| Daumen + Zeigefinger **oder** Daumen + Mittelfinger kurz zusammen | Linksklick |
+| Zusammenhalten und Hand bewegen | Ziehen / Markieren |
+| Daumen + Ringfinger halten, Hand hoch/runter | Scrollen |
+| Daumen + kleiner Finger zusammen | Rechtsklick |
 | **Strg + Alt + H** (Tastatur) | Pause / Weiter |
+
+Ein farbiger Ring um den Mauszeiger zeigt, wo der Zeiger ist und was die Hand gerade tut:
+Blau = Zeiger, Grün = Linksklick, Orange = Rechtsklick, Lila = Scrollen.
+Beim Klicken bleibt der Zeiger stehen, damit der Klick nicht verrutscht; erst eine deutliche
+Handbewegung beginnt das Ziehen. Bewegst du die echte Maus, lässt HandMaus den Zeiger kurz los.
 
 ## Hand-Symbol im Infobereich
 
@@ -34,6 +39,7 @@ noch gespeichert noch verschickt. In der Pause ist die Kamera ausgeschaltet.
     damit die Hand nicht vor dem Bildschirm ist).
   - **Bewegung** – wie weit du die Hand für den ganzen Bildschirm bewegen musst.
   - **Kamera** – falls mehrere Kameras angeschlossen sind.
+  - **Ring um den Mauszeiger** – den farbigen Ring ein- oder ausschalten.
   - **Mit Windows starten** – HandMaus automatisch beim Anmelden starten.
   - **Beenden**
 

@@ -3,7 +3,9 @@
 Läuft ohne Fenster im Infobereich (Tray). Das Kamerabild wird nur im Arbeitsspeicher
 ausgewertet, nie angezeigt, gespeichert oder verschickt.
 """
+import collections
 import ctypes
+from ctypes import wintypes
 import json
 import math
 import os
@@ -25,11 +27,14 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
 HELP_TEXT = (
     'Hand bewegen  →  Mauszeiger bewegen\n'
-    'Daumen + Zeigefinger kurz zusammen  →  Linksklick\n'
-    'Daumen + Zeigefinger halten und bewegen  →  Ziehen / Markieren\n'
-    'Daumen + Mittelfinger zusammen  →  Rechtsklick\n'
-    'Zeige- und Mittelfinger gestreckt (✌), Hand hoch/runter  →  Scrollen\n\n'
-    'Strg + Alt + H  →  Pause / Weiter\n\n'
+    'Daumen + Zeigefinger ODER Daumen + Mittelfinger kurz zusammen  →  Linksklick\n'
+    'Zusammenhalten und Hand bewegen  →  Ziehen / Markieren\n'
+    'Daumen + Ringfinger halten, Hand hoch/runter  →  Scrollen\n'
+    'Daumen + kleiner Finger zusammen  →  Rechtsklick\n\n'
+    'Der Ring um den Mauszeiger zeigt den Zustand:\n'
+    'Blau = Zeiger, Grün = Linksklick, Orange = Rechtsklick, Lila = Scrollen\n\n'
+    'Strg + Alt + H  →  Pause / Weiter\n'
+    'Bewegst du die echte Maus, lässt HandMaus den Zeiger kurz los.\n\n'
     'Einstellungen: Rechtsklick auf das Hand-Symbol im Infobereich.\n'
     'In der Pause ist die Kamera ausgeschaltet.'
 )
@@ -43,7 +48,7 @@ SIZES = {'gross': .6, 'normal': .42, 'klein': .28}
 SIZE_NAMES = {'gross': 'Groß (weite Handbewegung)', 'normal': 'Normal', 'klein': 'Klein (kurze Handbewegung)'}
 HAND_NAMES = {'auto': 'Automatisch', 'rechts': 'Rechte Hand', 'links': 'Linke Hand'}
 
-config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0}
+config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0, 'ring': True}
 
 
 def load_config():
@@ -64,18 +69,35 @@ def save_config():
 
 
 # ---------- Windows-Maus ----------
-user32 = ctypes.windll.user32
-LEFTDOWN, LEFTUP, RIGHTDOWN, RIGHTUP, WHEEL = 0x0002, 0x0004, 0x0008, 0x0010, 0x0800
+user32 = ctypes.WinDLL('user32', use_last_error=True)
+kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+MOVE_ABS, LEFTDOWN, LEFTUP, RIGHTDOWN, RIGHTUP, WHEEL = 0x8001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0800
 
 
 def mouse_event(flags, data=0):
     user32.mouse_event(flags, 0, 0, data, 0)
 
 
+def screen_size():
+    return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+
+
+def cursor_pos():
+    pt = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+def move_cursor(x, y):
+    """Bewegt den Zeiger als echtes Maus-Ereignis – so blendet Windows ihn auch wieder ein."""
+    w, h = screen_size()
+    user32.mouse_event(MOVE_ABS, x * 65536 // w + 1, y * 65536 // h + 1, 0, 0)
+
+
 class OneEuro:
     """Glättet Zittern bei ruhiger Hand, bleibt bei schnellen Bewegungen direkt."""
 
-    def __init__(self, min_cutoff=1.2, beta=10.0, d_cutoff=1.0):
+    def __init__(self, min_cutoff=1.0, beta=10.0, d_cutoff=1.0):
         self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
         self.x = self.dx = self.t = None
 
@@ -93,10 +115,8 @@ class OneEuro:
             return x
         dt = max(t - self.t, 1e-3)
         dx = (x - self.x) / dt
-        a_d = self._alpha(self.d_cutoff, dt)
-        self.dx += a_d * (dx - self.dx)
-        a = self._alpha(self.min_cutoff + self.beta * abs(self.dx), dt)
-        self.x += a * (x - self.x)
+        self.dx += self._alpha(self.d_cutoff, dt) * (dx - self.dx)
+        self.x += self._alpha(self.min_cutoff + self.beta * abs(self.dx), dt) * (x - self.x)
         self.t = t
         return self.x
 
@@ -116,6 +136,11 @@ def zone_rect():
     return fit(cx) - s / 2, fit(cy) - s / 2, s
 
 
+PINCH_ON, PINCH_OFF = .30, .48  # Abstand Daumen–Fingerspitze relativ zur Handgröße
+DRAG_START = .035               # so weit muss sich die Hand beim Halten bewegen, bevor gezogen wird
+GRACE = .25                     # so lange darf die Hand kurz verschwinden, ohne dass losgelassen wird
+
+
 class Gestures:
     """Wählt eine Hand aus, bleibt bei ihr und leitet daraus Zeiger, Klicks und Scrollen ab."""
 
@@ -123,12 +148,20 @@ class Gestures:
         self.act = act  # False im Selbsttest: nichts an die Maus schicken
         self.lock = None
         self.lock_seen = 0.0
-        self.left = self.right = self.scrolling = False
-        self.left_since = 0.0
-        self.scroll_y = self.scroll_rest = 0.0
         self.fx, self.fy = OneEuro(), OneEuro()
-        self.last_px = None
-        self.present = False
+        self.history = collections.deque(maxlen=20)  # (Zeit, Zeigerposition) der letzten Bilder
+        self.pos = (.5, .5)        # Zeigerposition 0..1
+        self.offset = (0.0, 0.0)   # Versatz Hand → Zeiger nach einem Klick, klingt wieder ab
+        self.sent_px = self.last_px = None
+        self.yield_until = 0.0     # die echte Maus wurde bewegt: bis dahin nicht eingreifen
+        self.t = 0.0
+        self.seen = 0.0
+        self._idle()
+
+    def _idle(self):
+        self.present = self.left = self.right = self.scrolling = self.dragging = self.was_frozen = False
+        self.press_at = (0.0, 0.0)
+        self.scroll_y = self.scroll_rest = 0.0
 
     def reset_lock(self):
         self.lock = None
@@ -136,8 +169,9 @@ class Gestures:
     def release(self):
         if self.left and self.act:
             mouse_event(LEFTUP)
-        self.left = self.right = self.scrolling = False
-        self.present = False
+        self._idle()
+        self.offset = (0.0, 0.0)
+        self.history.clear()
         self.fx.reset()
         self.fy.reset()
 
@@ -166,66 +200,113 @@ class Gestures:
             self.lock, self.lock_seen = hand['c'], now
         return hand
 
+    def _anchor(self, now):
+        """Zeigerposition kurz vor dem Kneifen – das Schließen der Finger verzieht die Hand leicht."""
+        before = [p for t, p in self.history if t <= now - .12]
+        if not before:
+            return self.pos
+        old = before[-1]
+        drift = math.hypot(self.pos[0] - old[0], self.pos[1] - old[1])
+        return old if drift < .03 else self.pos  # größere Strecke = gewollte Bewegung, nicht zurückspringen
+
+    def _move(self, now):
+        if not self.act:
+            return
+        w, h = screen_size()
+        px = (round(self.pos[0] * (w - 1)), round(self.pos[1] * (h - 1)))
+        here = cursor_pos()
+        if now < self.yield_until:  # solange die echte Maus weiterbewegt wird, weiter warten
+            if here != self.last_px:
+                self.yield_until = now + 1.0
+            self.last_px = here
+            return
+        # Steht der Zeiger nicht dort, wo wir ihn hingesetzt haben, hat jemand die echte Maus bewegt
+        if self.sent_px and abs(here[0] - self.sent_px[0]) + abs(here[1] - self.sent_px[1]) > 8:
+            self.yield_until, self.sent_px, self.last_px = now + 1.0, None, here
+            return
+        if px != self.sent_px:
+            move_cursor(*px)
+            self.sent_px = px
+
     def update(self, result, now):
+        dt, self.t = min(now - self.t, .2), now
         hand = self.pick(result, now)
         if not hand:
-            if self.present:
+            if self.present and now - self.seen > GRACE:
                 self.release()
-            return None
-        self.present = True
+            return {'held': True} if self.present else None
+        self.present, self.seen = True, now
         lm = hand['lm']
         size = max(dist(lm[0], lm[9]), dist(lm[5], lm[17]) * 1.25) or 1e-6
-        pinch_i, pinch_m = dist(lm[4], lm[8]) / size, dist(lm[4], lm[12]) / size
-        ext = lambda i: dist(lm[i], lm[0]) > dist(lm[i - 2], lm[0]) * 1.15
+        pinch = lambda tip: dist(lm[4], lm[tip]) / size
+        # Der Finger, der dem Daumen am nächsten ist, bestimmt die Aktion
+        p_left, p_scroll, p_right = min(pinch(8), pinch(12)), pinch(16), pinch(20)
+        nearest = min(p_left, p_scroll, p_right)
+        busy = self.left or self.right or self.scrolling
 
-        # Linksklick: Daumen + Zeigefinger (gedrückt halten = ziehen)
+        x0, y0, s = zone_rect()
+        hx = self.fx(clamp((hand['c'][0] - x0) / s, 0, 1), now)
+        hy = self.fy(clamp((hand['c'][1] - y0) / s, 0, 1), now)
+
+        # Linksklick: Daumen + Zeige- oder Mittelfinger (halten und bewegen = ziehen)
         if self.left:
-            if pinch_i > .48:
-                self.left = False
+            if p_left > PINCH_OFF:
+                self.left = self.dragging = False
                 if self.act:
                     mouse_event(LEFTUP)
-        elif pinch_i < .30 and pinch_i <= pinch_m and not self.right:
-            self.left, self.left_since = True, now
+        elif p_left < PINCH_ON and p_left == nearest and not busy:
+            self.left, self.press_at = True, (hx, hy)
+            self.pos = self._anchor(now)
+            self._move(now)
             if self.act:
                 mouse_event(LEFTDOWN)
 
-        # Rechtsklick: Daumen + Mittelfinger (einmal pro Kneifen)
+        # Rechtsklick: Daumen + kleiner Finger (einmal pro Kneifen)
         if self.right:
-            if pinch_m > .48:
+            if p_right > PINCH_OFF:
                 self.right = False
-        elif pinch_m < .30 and pinch_m < pinch_i and not self.left:
+        elif p_right < PINCH_ON and p_right == nearest and not busy:
             self.right = True
+            self.pos = self._anchor(now)
+            self._move(now)
             if self.act:
                 mouse_event(RIGHTDOWN)
                 mouse_event(RIGHTUP)
 
-        # Scrollen: Zeige- und Mittelfinger gestreckt, Ring- und kleiner Finger eingeklappt
-        pose = (not self.left and not self.right and pinch_i > .5 and pinch_m > .5
-                and ext(8) and ext(12) and not ext(16) and not ext(20))
+        # Scrollen: Daumen + Ringfinger halten und die Hand hoch oder runter bewegen
         cy = hand['c'][1]
-        if pose and self.scrolling:
-            self.scroll_rest += (self.scroll_y - cy) * 6000
-            steps = int(self.scroll_rest / 30) * 30
-            if steps and self.act:
-                mouse_event(WHEEL, steps)
-            self.scroll_rest -= steps
-        self.scrolling, self.scroll_y = pose, cy
-        if not pose:
-            self.scroll_rest = 0.0
+        if self.scrolling:
+            if p_scroll > PINCH_OFF:
+                self.scrolling = False
+            else:
+                self.scroll_rest += (self.scroll_y - cy) * 6000
+                steps = int(self.scroll_rest / 30) * 30
+                if steps and self.act:
+                    mouse_event(WHEEL, steps)
+                self.scroll_rest -= steps
+        elif p_scroll < PINCH_ON and p_scroll == nearest and not busy:
+            self.scrolling, self.scroll_rest = True, 0.0
+            self.pos = self._anchor(now)
+        self.scroll_y = cy
 
-        # Zeiger: beim Klicken kurz festhalten, damit der Klick nicht verrutscht
-        x0, y0, s = zone_rect()
-        nx = self.fx(clamp((hand['c'][0] - x0) / s, 0, 1), now)
-        ny = self.fy(clamp((hand['c'][1] - y0) / s, 0, 1), now)
-        frozen = self.scrolling or self.right or (self.left and now - self.left_since < .3)
-        if not frozen and self.act:
-            w, h = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-            px = (round(nx * (w - 1)), round(ny * (h - 1)))
-            if self.last_px is None or abs(px[0] - self.last_px[0]) + abs(px[1] - self.last_px[1]) >= 2:
-                user32.SetCursorPos(*px)
-                self.last_px = px
+        # Zeiger: bleibt beim Klicken stehen; erst eine deutliche Handbewegung beginnt das Ziehen
+        if self.left and not self.dragging:
+            if math.hypot(hx - self.press_at[0], hy - self.press_at[1]) > DRAG_START:
+                self.dragging = True
+                self.offset = (self.pos[0] - hx, self.pos[1] - hy)
+        frozen = self.scrolling or self.right or (self.left and not self.dragging)
+        if not frozen:
+            if self.was_frozen and not self.left:  # nach Klick/Scrollen nicht zur Hand springen, sondern gleiten
+                self.offset = (self.pos[0] - hx, self.pos[1] - hy)
+            if not self.left:  # Versatz sanft abbauen
+                k = max(0.0, 1 - dt * 6)
+                self.offset = (self.offset[0] * k, self.offset[1] * k)
+            self.pos = (clamp(hx + self.offset[0], 0, 1), clamp(hy + self.offset[1], 0, 1))
+        self.was_frozen = frozen
+        self.history.append((now, self.pos))
+        self._move(now)
         return {'label': hand['label'], 'left': self.left, 'right': self.right, 'scroll': self.scrolling,
-                'pos': (round(nx, 3), round(ny, 3))}
+                'pos': (round(self.pos[0], 3), round(self.pos[1], 3))}
 
 
 def make_landmarker():
@@ -292,7 +373,7 @@ class Tracker(threading.Thread):
             now = time.perf_counter()
             ts = max(last_ts + 1, int((now - t0) * 1000))
             last_ts = ts
-            # Gespiegelt wie ein Selfie: Hand nach rechts = Zeiger nach rechts, und die Händigkeit stimmt
+            # Gespiegelt wie ein Selfie: Hand nach rechts = Zeiger nach rechts
             rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
             result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
             if self.gestures.update(result, now):
@@ -306,6 +387,67 @@ class Tracker(threading.Thread):
             cap.release()
         self.gestures.release()
         landmarker.close()
+
+
+class Ring(threading.Thread):
+    """Farbiger Ring um den Mauszeiger: zeigt, wo der Zeiger ist und was die Hand gerade tut.
+
+    Ein kleines, durchsichtiges Fenster, das immer oben liegt und Klicks durchlässt.
+    """
+    SIZE, KEY = 46, '#010203'
+    COLORS = {'move': '#35a8ff', 'left': '#2ecc71', 'right': '#ff9f1c', 'scroll': '#b06bff'}
+
+    def __init__(self, tracker):
+        super().__init__(daemon=True)
+        self.tracker = tracker
+        self.error = None
+
+    def state(self):
+        g = self.tracker.gestures
+        if self.tracker.paused or not config['ring'] or not g.present or g.t < g.yield_until:
+            return None
+        return 'left' if g.left else 'right' if g.right else 'scroll' if g.scrolling else 'move'
+
+    def run(self):
+        try:
+            import tkinter as tk
+            s = self.SIZE
+            root = tk.Tk()
+            root.overrideredirect(True)
+            root.attributes('-topmost', True)
+            root.attributes('-transparentcolor', self.KEY)
+            root.config(bg=self.KEY)
+            canvas = tk.Canvas(root, width=s, height=s, bg=self.KEY, highlightthickness=0)
+            canvas.pack()
+            canvas.create_oval(3, 3, s - 3, s - 3, outline='#101418', width=5)
+            ring = canvas.create_oval(3, 3, s - 3, s - 3, outline=self.COLORS['move'], width=3)
+            root.geometry(f'{s}x{s}+-200+-200')
+            root.update_idletasks()
+            hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+            # durchklickbar, nicht in der Taskleiste, nimmt nie den Fokus
+            user32.SetWindowLongW(hwnd, -20, user32.GetWindowLongW(hwnd, -20) | 0x80000 | 0x20 | 0x80 | 0x08000000)
+            shown = [None]
+
+            def tick():
+                if self.tracker.stop_event.is_set():
+                    root.destroy()
+                    return
+                state = self.state()
+                if state:
+                    x, y = cursor_pos()
+                    root.geometry(f'+{x - s // 2}+{y - s // 2}')
+                    if state != shown[0]:
+                        canvas.itemconfig(ring, outline=self.COLORS[state])
+                        root.attributes('-topmost', True)
+                elif shown[0]:
+                    root.geometry('+-200+-200')
+                shown[0] = state
+                root.after(16 if state else 100, tick)
+
+            tick()
+            root.mainloop()
+        except Exception as e:  # ohne Ring läuft HandMaus trotzdem weiter
+            self.error = e
 
 
 # ---------- Infobereich (Tray) ----------
@@ -352,7 +494,6 @@ def message_box(text):
 
 def hotkey_loop(callback):
     """Strg + Alt + H schaltet Pause um."""
-    from ctypes import wintypes
     if not user32.RegisterHotKey(None, 1, 0x0001 | 0x0002, 0x48):
         return
     msg = wintypes.MSG()
@@ -366,24 +507,28 @@ def main():
         user32.SetProcessDPIAware()
     except OSError:
         pass
-    ctypes.windll.kernel32.CreateMutexW(None, False, 'HandMaus_single_instance')
-    if ctypes.windll.kernel32.GetLastError() == 183:
+    kernel32.CreateMutexW(None, False, 'HandMaus_single_instance')
+    if ctypes.get_last_error() == 183:
         user32.MessageBoxW(0, 'HandMaus läuft bereits – siehe Hand-Symbol im Infobereich.', APP, 0x40)
         return
     load_config()
 
-    icon = pystray.Icon(APP, make_icon(STATUS['suche'][0]), APP)
+    icons = {name: make_icon(color) for name, (color, _) in STATUS.items()}
+    icon = pystray.Icon(APP, icons['suche'], APP)
 
     def on_status(status):
-        color, text = STATUS[status]
-        icon.icon = make_icon(color)
-        icon.title = f'{APP} – {text}'
+        icon.icon = icons[status]
+        icon.title = f'{APP} – {STATUS[status][1]}'
 
     tracker = Tracker(on_status)
 
     def toggle_pause(*_):
         tracker.paused = not tracker.paused
         icon.update_menu()
+
+    def toggle_ring(*_):
+        config['ring'] = not config['ring']
+        save_config()
 
     def choose(key, value):
         def action(*_):
@@ -409,6 +554,7 @@ def main():
         pystray.MenuItem('Steuerzone', radio('zone', ZONE_NAMES)),
         pystray.MenuItem('Bewegung', radio('size', SIZE_NAMES)),
         pystray.MenuItem('Kamera', radio('camera', {0: 'Kamera 1', 1: 'Kamera 2', 2: 'Kamera 3'})),
+        pystray.MenuItem('Ring um den Mauszeiger', toggle_ring, checked=lambda item: config['ring']),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem('Gesten anzeigen', lambda *_: message_box(HELP_TEXT)),
     ]
@@ -421,6 +567,7 @@ def main():
     def setup(icon):
         icon.visible = True
         tracker.start()
+        Ring(tracker).start()
         threading.Thread(target=hotkey_loop, args=(toggle_pause,), daemon=True).start()
         if not os.path.exists(CONFIG_FILE):
             save_config()
