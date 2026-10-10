@@ -22,7 +22,12 @@ noch gespeichert noch verschickt. In der Pause ist die Kamera ausgeschaltet.
 | Zusammenhalten und Hand bewegen | Ziehen / Markieren |
 | Daumen + Ringfinger halten, Hand hoch/runter | Scrollen |
 | Daumen + kleiner Finger zusammen | Rechtsklick |
-| **Strg + Alt + H** (Tastatur) | Pause / Weiter |
+| Hand 3× schnell zu- und aufmachen (Faust) | Steuerung stoppen / fortsetzen |
+| **Strg + Alt + H** (Tastatur) | Pause / Weiter (Kamera aus) |
+
+Beim Stoppen per Geste ertönt ein kurzer Ton, der Ring leuchtet rot auf und das Hand-Symbol wird rot.
+Die Kamera läuft dabei weiter, damit dieselbe Geste die Steuerung wieder einschalten kann – die Maus
+wird aber nicht mehr bewegt und es wird nicht geklickt. Eine Faust allein löst nie einen Klick aus.
 
 Ein farbiger Ring um den Mauszeiger zeigt, wo der Zeiger ist und was die Hand gerade tut:
 Blau = Zeiger, Grün = Linksklick, Orange = Rechtsklick, Lila = Scrollen.
@@ -31,7 +36,8 @@ Handbewegung beginnt das Ziehen. Bewegst du die echte Maus, lässt HandMaus den 
 
 ## Hand-Symbol im Infobereich
 
-- **Grün** – Hand erkannt · **Blau** – sucht Hand · **Grau** – Pause · **Orange** – keine Kamera
+- **Grün** – Hand erkannt · **Blau** – sucht Hand · **Rot** – per Geste gestoppt · **Grau** – Pause ·
+  **Orange** – keine Kamera
 - **Linksklick** auf das Symbol: Pause / Weiter
 - **Rechtsklick**: Einstellungen
   - **Hand** – Automatisch, rechte oder linke Hand. Es wird immer nur eine Hand verfolgt.

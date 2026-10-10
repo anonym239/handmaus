@@ -33,7 +33,8 @@ HELP_TEXT = (
     'Daumen + kleiner Finger zusammen  →  Rechtsklick\n\n'
     'Der Ring um den Mauszeiger zeigt den Zustand:\n'
     'Blau = Zeiger, Grün = Linksklick, Orange = Rechtsklick, Lila = Scrollen\n\n'
-    'Strg + Alt + H  →  Pause / Weiter\n'
+    'Hand 3× schnell zu- und aufmachen  →  Steuerung stoppen / fortsetzen (Ton + roter Ring)\n'
+    'Strg + Alt + H  →  Pause / Weiter (Kamera aus)\n'
     'Bewegst du die echte Maus, lässt HandMaus den Zeiger kurz los.\n\n'
     'Einstellungen: Rechtsklick auf das Hand-Symbol im Infobereich.\n'
     'In der Pause ist die Kamera ausgeschaltet.'
@@ -97,7 +98,7 @@ def move_cursor(x, y):
 class OneEuro:
     """Glättet Zittern bei ruhiger Hand, bleibt bei schnellen Bewegungen direkt."""
 
-    def __init__(self, min_cutoff=1.0, beta=10.0, d_cutoff=1.0):
+    def __init__(self, min_cutoff=1.6, beta=25.0, d_cutoff=1.0):
         self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
         self.x = self.dx = self.t = None
 
@@ -139,6 +140,14 @@ def zone_rect():
 PINCH_ON, PINCH_OFF = .30, .48  # Abstand Daumen–Fingerspitze relativ zur Handgröße
 DRAG_START = .035               # so weit muss sich die Hand beim Halten bewegen, bevor gezogen wird
 GRACE = .25                     # so lange darf die Hand kurz verschwinden, ohne dass losgelassen wird
+LEAD = .02                      # Sekunden, die der Zeiger der Handbewegung vorausschaut
+PUMP_WINDOW = 2.0               # in dieser Zeit muss die Hand dreimal zur Faust geschlossen werden
+
+
+def beep(stopped):
+    import winsound
+    tones = ((660, 90), (440, 140)) if stopped else ((440, 90), (660, 140))
+    threading.Thread(target=lambda: [winsound.Beep(f, ms) for f, ms in tones], daemon=True).start()
 
 
 class Gestures:
@@ -156,10 +165,15 @@ class Gestures:
         self.yield_until = 0.0     # die echte Maus wurde bewegt: bis dahin nicht eingreifen
         self.t = 0.0
         self.seen = 0.0
+        self.stopped = False       # per Geste angehalten: Kamera läuft weiter, die Maus bleibt in Ruhe
+        self.toggled = -9.0
+        self.pumps = collections.deque(maxlen=3)  # Zeitpunkte der letzten Faust-Schlüsse
+        self.hand_open = None
         self._idle()
 
     def _idle(self):
         self.present = self.left = self.right = self.scrolling = self.dragging = self.was_frozen = False
+        self.curl = None
         self.press_at = (0.0, 0.0)
         self.scroll_y = self.scroll_rest = 0.0
 
@@ -200,6 +214,29 @@ class Gestures:
             self.lock, self.lock_seen = hand['c'], now
         return hand
 
+    def _pump(self, curl, now):
+        """Hand dreimal schnell zu- und aufmachen schaltet die Steuerung aus bzw. wieder ein."""
+        if max(curl.values()) < 1.1:
+            is_open = False
+        elif min(curl.values()) > 1.5:
+            is_open = True
+        else:
+            return
+        if is_open == self.hand_open:
+            return
+        if self.hand_open and not is_open:  # gerade zur Faust geschlossen
+            self.pumps.append(now)
+            if len(self.pumps) == 3 and now - self.pumps[0] < PUMP_WINDOW and now - self.toggled > 1:
+                self.pumps.clear()
+                self.toggled = now
+                self.stopped = not self.stopped
+                if self.left and self.act:
+                    mouse_event(LEFTUP)
+                self.left = self.right = self.scrolling = self.dragging = False
+                if self.act:
+                    beep(self.stopped)
+        self.hand_open = is_open
+
     def _anchor(self, now):
         """Zeigerposition kurz vor dem Kneifen – das Schließen der Finger verzieht die Hand leicht."""
         before = [p for t, p in self.history if t <= now - .12]
@@ -238,15 +275,28 @@ class Gestures:
         self.present, self.seen = True, now
         lm = hand['lm']
         size = max(dist(lm[0], lm[9]), dist(lm[5], lm[17]) * 1.25) or 1e-6
+        # Streckung je Finger: ~2 = gestreckt, unter 1 = in die Handfläche eingerollt
+        curl = {tip: dist(lm[tip], lm[0]) / (dist(lm[tip - 3], lm[0]) or 1e-6) for tip in (8, 12, 16, 20)}
+        self._pump(curl, now)
+        closing = abs(sum(curl.values()) - sum(self.curl.values())) / 4 / max(dt, 1e-3) > 2.5 if self.curl else False
+        self.curl = curl
+        if self.stopped:
+            return {'stopped': True}
+
         pinch = lambda tip: dist(lm[4], lm[tip]) / size
         # Der Finger, der dem Daumen am nächsten ist, bestimmt die Aktion
-        p_left, p_scroll, p_right = min(pinch(8), pinch(12)), pinch(16), pinch(20)
+        left_tip = min((8, 12), key=pinch)
+        p_left, p_scroll, p_right = pinch(left_tip), pinch(16), pinch(20)
         nearest = min(p_left, p_scroll, p_right)
         busy = self.left or self.right or self.scrolling
+        # Eine Faust oder eine sich gerade schließende/öffnende Hand ist kein Kneifen
+        may = lambda tip: curl[tip] >= .95 and not closing
 
         x0, y0, s = zone_rect()
         hx = self.fx(clamp((hand['c'][0] - x0) / s, 0, 1), now)
         hy = self.fy(clamp((hand['c'][1] - y0) / s, 0, 1), now)
+        # ein kleines Stück vorausschauen gleicht die Verzögerung von Kamera und Erkennung aus
+        hx, hy = clamp(hx + self.fx.dx * LEAD, 0, 1), clamp(hy + self.fy.dx * LEAD, 0, 1)
 
         # Linksklick: Daumen + Zeige- oder Mittelfinger (halten und bewegen = ziehen)
         if self.left:
@@ -254,7 +304,7 @@ class Gestures:
                 self.left = self.dragging = False
                 if self.act:
                     mouse_event(LEFTUP)
-        elif p_left < PINCH_ON and p_left == nearest and not busy:
+        elif p_left < PINCH_ON and p_left == nearest and not busy and may(left_tip):
             self.left, self.press_at = True, (hx, hy)
             self.pos = self._anchor(now)
             self._move(now)
@@ -265,7 +315,7 @@ class Gestures:
         if self.right:
             if p_right > PINCH_OFF:
                 self.right = False
-        elif p_right < PINCH_ON and p_right == nearest and not busy:
+        elif p_right < PINCH_ON and p_right == nearest and not busy and may(20):
             self.right = True
             self.pos = self._anchor(now)
             self._move(now)
@@ -284,7 +334,7 @@ class Gestures:
                 if steps and self.act:
                     mouse_event(WHEEL, steps)
                 self.scroll_rest -= steps
-        elif p_scroll < PINCH_ON and p_scroll == nearest and not busy:
+        elif p_scroll < PINCH_ON and p_scroll == nearest and not busy and may(16):
             self.scrolling, self.scroll_rest = True, 0.0
             self.pos = self._anchor(now)
         self.scroll_y = cy
@@ -317,6 +367,51 @@ def make_landmarker():
         num_hands=2, min_hand_detection_confidence=.6, min_hand_presence_confidence=.6, min_tracking_confidence=.6))
 
 
+class Camera:
+    """Liest die Kamera in einem eigenen Thread und hält nur das neueste Bild bereit.
+
+    So wird nie ein veraltetes Bild aus dem Puffer ausgewertet – das spart spürbar Verzögerung.
+    """
+
+    def __init__(self, index):
+        self.cap = cv2.VideoCapture(int(index), cv2.CAP_DSHOW)
+        self.ok = self.cap.isOpened()
+        self.frame = None
+        self.fresh = threading.Event()
+        if self.ok:
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # volle Bildrate auch bei wenig Licht
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.thread = threading.Thread(target=self._loop, daemon=True)
+            self.thread.start()
+        else:
+            self.cap.release()
+
+    def _loop(self):
+        while self.ok:
+            ok, frame = self.cap.read()
+            if not ok:
+                self.ok = False
+                break
+            self.frame = frame
+            self.fresh.set()
+        self.cap.release()
+        self.fresh.set()
+
+    def read(self):
+        """Wartet auf das nächste neue Bild; None, wenn die Kamera ausgefallen ist."""
+        if not self.fresh.wait(2) or not self.ok:
+            return None
+        self.fresh.clear()
+        return self.frame
+
+    def close(self):
+        self.ok = False
+        self.thread.join(1.5)  # warten, bis die Kamera wirklich freigegeben ist
+
+
 class Tracker(threading.Thread):
     def __init__(self, on_status):
         super().__init__(daemon=True)
@@ -331,24 +426,13 @@ class Tracker(threading.Thread):
             self.status = status
             self.on_status(status)
 
-    def open_camera(self):
-        cap = cv2.VideoCapture(int(config['camera']), cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap.release()
-            return None
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        return cap
-
     def run(self):
         landmarker = make_landmarker()
         cap, camera, t0, last_ts, last_hand = None, None, time.perf_counter(), 0, 0.0
         while not self.stop_event.is_set():
             if self.paused or camera != config['camera']:
                 if cap:
-                    cap.release()
+                    cap.close()
                     cap = None
                 self.gestures.release()
                 camera = config['camera']
@@ -357,14 +441,15 @@ class Tracker(threading.Thread):
                     time.sleep(.2)
                     continue
             if cap is None:
-                cap = self.open_camera()
-                if cap is None:
+                cap = Camera(config['camera'])
+                if not cap.ok:
+                    cap = None
                     self.set_status('nocam')
                     time.sleep(2)
                     continue
-            ok, frame = cap.read()
-            if not ok:
-                cap.release()
+            frame = cap.read()
+            if frame is None:
+                cap.close()
                 cap = None
                 self.gestures.release()
                 self.set_status('nocam')
@@ -376,15 +461,15 @@ class Tracker(threading.Thread):
             # Gespiegelt wie ein Selfie: Hand nach rechts = Zeiger nach rechts
             rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
             result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
-            if self.gestures.update(result, now):
+            seen = self.gestures.update(result, now)
+            if seen:
                 last_hand = now
-                self.set_status('aktiv')
-            else:
-                self.set_status('suche')
+            self.set_status('gestoppt' if self.gestures.stopped else 'aktiv' if seen else 'suche')
+            if not seen:
                 if now - last_hand > 3:
                     time.sleep(.15)  # ohne Hand nur ein paar Mal pro Sekunde nachsehen
         if cap:
-            cap.release()
+            cap.close()
         self.gestures.release()
         landmarker.close()
 
@@ -395,7 +480,7 @@ class Ring(threading.Thread):
     Ein kleines, durchsichtiges Fenster, das immer oben liegt und Klicks durchlässt.
     """
     SIZE, KEY = 46, '#010203'
-    COLORS = {'move': '#35a8ff', 'left': '#2ecc71', 'right': '#ff9f1c', 'scroll': '#b06bff'}
+    COLORS = {'move': '#35a8ff', 'left': '#2ecc71', 'right': '#ff9f1c', 'scroll': '#b06bff', 'stop': '#ff4d4d'}
 
     def __init__(self, tracker):
         super().__init__(daemon=True)
@@ -406,6 +491,8 @@ class Ring(threading.Thread):
         g = self.tracker.gestures
         if self.tracker.paused or not config['ring'] or not g.present or g.t < g.yield_until:
             return None
+        if g.stopped:  # kurz rot aufleuchten, dann verschwinden
+            return 'stop' if g.t - g.toggled < 1.5 else None
         return 'left' if g.left else 'right' if g.right else 'scroll' if g.scrolling else 'move'
 
     def run(self):
@@ -452,6 +539,7 @@ class Ring(threading.Thread):
 
 # ---------- Infobereich (Tray) ----------
 STATUS = {'aktiv': ('#2ecc71', 'Hand erkannt'), 'suche': ('#3498db', 'sucht Hand'),
+          'gestoppt': ('#e74c3c', 'per Geste gestoppt – Hand 3× zu und auf zum Fortsetzen'),
           'pause': ('#7f8c8d', 'Pause – Kamera aus'), 'nocam': ('#e67e22', 'keine Kamera gefunden')}
 
 
@@ -524,6 +612,7 @@ def main():
 
     def toggle_pause(*_):
         tracker.paused = not tracker.paused
+        tracker.gestures.stopped = False
         icon.update_menu()
 
     def toggle_ring(*_):
