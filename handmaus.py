@@ -35,7 +35,7 @@ SIZES = {'gross': .6, 'normal': .42, 'klein': .28}
 SIZE_NAMES = {'gross': 'Groß (weite Handbewegung)', 'normal': 'Normal', 'klein': 'Klein (kurze Handbewegung)'}
 HAND_NAMES = {'auto': 'Automatisch', 'rechts': 'Rechte Hand', 'links': 'Linke Hand'}
 
-config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0, 'ring': True}
+config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0, 'ring': True, 'guide_seen': False}
 
 
 def load_config():
@@ -723,9 +723,10 @@ def main():
         tracker.start()
         Ring(tracker).start()
         threading.Thread(target=hotkey_loop, args=(toggle_pause,), daemon=True).start()
-        if not os.path.exists(CONFIG_FILE):
+        if not config['guide_seen']:  # beim ersten Start einmal die Anleitung zeigen
+            config['guide_seen'] = True
             save_config()
-            open_guide()  # beim allerersten Start die Anleitung zeigen
+            open_guide()
 
     icon.run(setup)
 

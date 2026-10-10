@@ -12,6 +12,8 @@ noch gespeichert noch verschickt. In der Pause ist die Kamera ausgeschaltet.
 2. Doppelklick. Windows zeigt beim ersten Mal evtl. „Der Computer wurde durch Windows geschützt“ –
    das liegt daran, dass die Datei nicht signiert ist: „Weitere Informationen → Trotzdem ausführen“.
 3. Nach ein paar Sekunden erscheint ein Hand-Symbol im Infobereich (unten rechts, evtl. hinter dem Pfeil ^).
+4. Beim ersten Start öffnet sich eine ausführliche Anleitung im Browser. Später findest du sie über
+   Rechtsklick auf das Hand-Symbol → „Anleitung öffnen“.
 
 ## Gesten
 
@@ -31,7 +33,8 @@ wird aber nicht mehr bewegt und es wird nicht geklickt. Eine Faust allein löst 
 
 Ein farbiger Ring um den Mauszeiger zeigt, wo der Zeiger ist und was die Hand gerade tut:
 Blau = Zeiger, Grün = Linksklick, Orange = Rechtsklick, Lila = Scrollen.
-Beim Klicken bleibt der Zeiger stehen, damit der Klick nicht verrutscht; erst eine deutliche
+Der Zeiger wird rund 200-mal pro Sekunde auf einer vorausberechneten, glatten Bahn geführt – auch
+schnelle Handbewegungen springen deshalb nicht in Stufen. Beim Klicken bleibt der Zeiger stehen, damit der Klick nicht verrutscht; erst eine deutliche
 Handbewegung beginnt das Ziehen. Bewegst du die echte Maus, lässt HandMaus den Zeiger kurz los.
 
 ## Hand-Symbol im Infobereich
