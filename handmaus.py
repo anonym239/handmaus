@@ -41,9 +41,13 @@ CALIB_KEYS = {'strg_alt_k': ('Strg+Alt+K', MOD_CTRL | MOD_ALT, 0x4B), 'strg_alt_
               'f7': ('F7', 0, 0x76), 'f8': ('F8', 0, 0x77), 'f9': ('F9', 0, 0x78), 'f10': ('F10', 0, 0x79),
               'aus': ('Keine Taste', 0, 0)}
 MIN_ZONE = .06  # kleinster erlaubter Kalibrier-Bereich (Anteil des Kamerabilds)
+# Glättung: Grenzfrequenz in Ruhe (Hz), Anstieg mit der Handgeschwindigkeit (im Kamerabild), Ruhezone (Anteil
+# der Bildschirmbreite: so weit darf die Hand zittern, ohne dass sich der Zeiger bewegt)
+SMOOTH = {'ruhig': (.4, 15.0, .006), 'normal': (.7, 30.0, .003), 'direkt': (1.6, 60.0, 0.0)}
+SMOOTH_NAMES = {'ruhig': 'Ruhig (kein Zittern)', 'normal': 'Normal', 'direkt': 'Direkt (schnellste Reaktion)'}
 
 config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0, 'ring': True, 'guide_seen': False,
-          'custom': None, 'calib_key': 'strg_alt_k'}
+          'custom': None, 'calib_key': 'strg_alt_k', 'smooth': 'ruhig'}
 
 
 def load_config():
@@ -251,6 +255,7 @@ class Gestures:
         self.lock = None
         self.lock_seen = 0.0
         self.fx, self.fy = OneEuro(), OneEuro()
+        self.still = None          # Zeigerposition der Ruhezone (0..1)
         self.history = collections.deque(maxlen=20)  # (Zeit, Zeigerposition) der letzten Bilder
         self.pos = (.5, .5)        # Zeigerposition 0..1
         self.offset = (0.0, 0.0)   # Versatz Hand → Zeiger nach einem Klick, klingt wieder ab
@@ -281,8 +286,12 @@ class Gestures:
             self.mover.idle()
         self.offset = (0.0, 0.0)
         self.history.clear()
+        self.reset_filter()
+
+    def reset_filter(self):
         self.fx.reset()
         self.fy.reset()
+        self.still = None
 
     def pick(self, result, now):
         hands = []
@@ -341,6 +350,32 @@ class Gestures:
         drift = math.hypot(self.pos[0] - old[0], self.pos[1] - old[1])
         return old if drift < .03 else self.pos  # größere Strecke = gewollte Bewegung, nicht zurückspringen
 
+    def _smooth(self, c, now):
+        """Handmitte → ruhige Zeigerposition (0..1).
+
+        Geglättet wird im Kamerabild, nicht auf dem Bildschirm: Ein kleiner Kalibrier-Kasten vergrößert sonst
+        das Messrauschen genauso stark wie die Handbewegung, und der Filter hielte das Zittern für Bewegung.
+        Danach hält eine kleine Ruhezone den Zeiger bei ruhiger Hand ganz still; erst wenn die Hand über ihren
+        Rand hinausgeht, wird der Zeiger mitgezogen – ohne Sprung.
+        """
+        min_cutoff, beta, dead = SMOOTH.get(config.get('smooth'), SMOOTH['ruhig'])
+        for f in (self.fx, self.fy):
+            f.min_cutoff, f.beta = min_cutoff, beta
+        x0, y0, zw, zh = zone_rect()
+        hx = clamp((self.fx(c[0], now) - x0) / zw, 0, 1)
+        hy = clamp((self.fy(c[1], now) - y0) / zh, 0, 1)
+        if not dead or self.still is None:
+            self.still = (hx, hy)
+            return hx, hy
+        w, h = screen_size()
+        dx, dy = (hx - self.still[0]) * w / h, hy - self.still[1]  # auf dem Bildschirm rund statt oval
+        d = math.hypot(dx, dy)
+        r = dead * w / h
+        if d > r:
+            k = 1 - r / d
+            self.still = (self.still[0] + (hx - self.still[0]) * k, self.still[1] + (hy - self.still[1]) * k)
+        return self.still
+
     def _move(self, now, snap=False):
         if self.mover:
             self.mover.aim(self.pos, now, snap)
@@ -382,9 +417,7 @@ class Gestures:
         # Eine Faust oder eine sich gerade schließende/öffnende Hand ist kein Kneifen
         may = lambda tip: curl[tip] >= .95 and not closing
 
-        x0, y0, zw, zh = zone_rect()
-        hx = self.fx(clamp((hand['c'][0] - x0) / zw, 0, 1), now)
-        hy = self.fy(clamp((hand['c'][1] - y0) / zh, 0, 1), now)
+        hx, hy = self._smooth(hand['c'], now)
 
         # Linksklick: Daumen + Zeige- oder Mittelfinger (halten und bewegen = ziehen)
         if self.left:
@@ -857,8 +890,7 @@ class Calibration:
     def close(self):
         self.g.calibrating = False
         self.g.reset_lock()
-        self.g.fx.reset()
-        self.g.fy.reset()
+        self.g.reset_filter()
         try:
             self.win.destroy()
         except self.tk.TclError:
@@ -1022,6 +1054,7 @@ def main():
         pystray.MenuItem('Hand', radio('hand', HAND_NAMES)),
         pystray.MenuItem('Steuerzone', radio('zone', ZONE_NAMES)),
         pystray.MenuItem('Bewegung', radio('size', SIZE_NAMES)),
+        pystray.MenuItem('Glättung', radio('smooth', SMOOTH_NAMES)),
         pystray.MenuItem(calib_label, calibrate),
         pystray.MenuItem('Taste für Kalibrieren', radio('calib_key', {k: v[0] for k, v in CALIB_KEYS.items()})),
         pystray.MenuItem('Kamera', radio('camera', {0: 'Kamera 1', 1: 'Kamera 2', 2: 'Kamera 3'})),
