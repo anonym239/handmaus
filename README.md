@@ -26,6 +26,24 @@ noch gespeichert noch verschickt. In der Pause ist die Kamera ausgeschaltet.
 | Daumen + kleiner Finger zusammen | Rechtsklick |
 | Hand 3× schnell zu- und aufmachen (Faust) | Steuerung stoppen / fortsetzen |
 | **Strg + Alt + H** (Tastatur) | Pause / Weiter (Kamera aus) |
+| **Strg + Alt + K** (Tastatur, einstellbar) | Kalibrieren – eigenen Handbereich festlegen |
+
+## Kalibrieren – die Hand muss nicht schweben
+
+Mit **Strg + Alt + K** (oder Rechtsklick auf das Hand-Symbol → „Kalibrieren …“) öffnet sich ein Fenster.
+Das große Rechteck steht für das Kamerabild, ein grüner Punkt zeigt, wo deine Hand gerade ist.
+Darin liegt ein blauer **Kasten**: Nur in diesem Bereich bewegst du künftig die Hand, und er deckt den ganzen
+Bildschirm ab. Je kleiner der Kasten, desto schneller läuft der Zeiger – du kannst die Hand also z. B. auf
+dem Tisch oder Ellbogen abstützen und sie nur ein kleines Stück bewegen.
+
+- **Mit der Maus:** Kasten neu aufziehen, hineinklicken und verschieben oder an den Ecken größer/kleiner ziehen.
+- **Mit der Hand (H):** nach 2 Sekunden Vorlauf 5 Sekunden lang die Hand bequem in alle Richtungen bewegen –
+  der Kasten wird genau um diese Bewegung gelegt.
+- **Speichern (Enter)** übernimmt den Kasten (Steuerzone wird „Eigener Bereich“), **Esc** bricht ab,
+  **R** setzt ihn auf den Standard zurück.
+
+Die Taste lässt sich unter Rechtsklick → „Taste für Kalibrieren“ ändern (Strg+Alt+K, Strg+Alt+C,
+Strg+Umschalt+K, F7–F10 oder keine). Während das Fenster offen ist, bewegt die Hand den Zeiger nicht.
 
 Beim Stoppen per Geste ertönt ein kurzer Ton, der Ring leuchtet rot auf und das Hand-Symbol wird rot.
 Die Kamera läuft dabei weiter, damit dieselbe Geste die Steuerung wieder einschalten kann – die Maus
@@ -46,7 +64,10 @@ Handbewegung beginnt das Ziehen. Bewegst du die echte Maus, lässt HandMaus den 
   - **Hand** – Automatisch, rechte oder linke Hand. Es wird immer nur eine Hand verfolgt.
   - **Steuerzone** – wo im Kamerabild du die Hand bewegst (z. B. „Unten“ oder „Rechts unten“,
     damit die Hand nicht vor dem Bildschirm ist).
-  - **Bewegung** – wie weit du die Hand für den ganzen Bildschirm bewegen musst.
+    „Eigener Bereich“ benutzt den kalibrierten Kasten.
+  - **Bewegung** – wie weit du die Hand für den ganzen Bildschirm bewegen musst (gilt nicht für den eigenen Bereich).
+  - **Kalibrieren …** – eigenen Handbereich festlegen (siehe oben).
+  - **Taste für Kalibrieren** – Tastenkombination, die das Kalibrieren öffnet.
   - **Kamera** – falls mehrere Kameras angeschlossen sind.
   - **Ring um den Mauszeiger** – den farbigen Ring ein- oder ausschalten.
   - **Mit Windows starten** – HandMaus automatisch beim Anmelden starten.
