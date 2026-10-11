@@ -66,6 +66,8 @@ Handbewegung beginnt das Ziehen. Bewegst du die echte Maus, lässt HandMaus den 
     damit die Hand nicht vor dem Bildschirm ist).
     „Eigener Bereich“ benutzt den kalibrierten Kasten.
   - **Bewegung** – wie weit du die Hand für den ganzen Bildschirm bewegen musst (gilt nicht für den eigenen Bereich).
+  - **Glättung** – *Ruhig* (Standard): der Zeiger steht bei ruhiger Hand ganz still und gleitet weich, reagiert
+    dafür einen Hauch später. *Normal* liegt dazwischen, *Direkt* reagiert am schnellsten, zittert aber leichter.
   - **Kalibrieren …** – eigenen Handbereich festlegen (siehe oben).
   - **Taste für Kalibrieren** – Tastenkombination, die das Kalibrieren öffnet.
   - **Kamera** – falls mehrere Kameras angeschlossen sind.
