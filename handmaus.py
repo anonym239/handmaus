@@ -30,12 +30,20 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 ZONES = {'mitte': (.5, .5), 'unten': (.5, .75), 'links': (.25, .5), 'rechts': (.75, .5),
          'linksunten': (.25, .75), 'rechtsunten': (.75, .75)}
 ZONE_NAMES = {'mitte': 'Mitte', 'unten': 'Unten', 'links': 'Links', 'rechts': 'Rechts',
-              'linksunten': 'Links unten', 'rechtsunten': 'Rechts unten'}
+              'linksunten': 'Links unten', 'rechtsunten': 'Rechts unten', 'eigen': 'Eigener Bereich (kalibriert)'}
 SIZES = {'gross': .6, 'normal': .42, 'klein': .28}
 SIZE_NAMES = {'gross': 'Groß (weite Handbewegung)', 'normal': 'Normal', 'klein': 'Klein (kurze Handbewegung)'}
 HAND_NAMES = {'auto': 'Automatisch', 'rechts': 'Rechte Hand', 'links': 'Linke Hand'}
+MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_NOREPEAT = 0x0001, 0x0002, 0x0004, 0x4000
+# Tasten, mit denen sich die Kalibrierung öffnen lässt: Name, Modifikatoren, virtueller Tastencode
+CALIB_KEYS = {'strg_alt_k': ('Strg+Alt+K', MOD_CTRL | MOD_ALT, 0x4B), 'strg_alt_c': ('Strg+Alt+C', MOD_CTRL | MOD_ALT, 0x43),
+              'strg_umschalt_k': ('Strg+Umschalt+K', MOD_CTRL | MOD_SHIFT, 0x4B),
+              'f7': ('F7', 0, 0x76), 'f8': ('F8', 0, 0x77), 'f9': ('F9', 0, 0x78), 'f10': ('F10', 0, 0x79),
+              'aus': ('Keine Taste', 0, 0)}
+MIN_ZONE = .06  # kleinster erlaubter Kalibrier-Bereich (Anteil des Kamerabilds)
 
-config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0, 'ring': True, 'guide_seen': False}
+config = {'hand': 'auto', 'zone': 'mitte', 'size': 'normal', 'camera': 0, 'ring': True, 'guide_seen': False,
+          'custom': None, 'calib_key': 'strg_alt_k'}
 
 
 def load_config():
@@ -116,11 +124,26 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def zone_rect():
+def custom_rect():
+    """Kalibrierter Bereich (x, y, Breite, Höhe im Kamerabild) oder None, wenn keiner gültig gespeichert ist."""
+    try:
+        x, y, w, h = (float(v) for v in config['custom'])
+    except (TypeError, ValueError):
+        return None
+    if w < MIN_ZONE or h < MIN_ZONE or x < 0 or y < 0 or x + w > 1.001 or y + h > 1.001:
+        return None
+    return x, y, w, h
+
+
+def zone_rect(zone=None):
+    """Bereich im Kamerabild, der auf den ganzen Bildschirm abgebildet wird: (x, y, Breite, Höhe)."""
+    zone = zone or config['zone']
+    if zone == 'eigen' and custom_rect():
+        return custom_rect()
     s = SIZES.get(config['size'], SIZES['normal'])
-    cx, cy = ZONES.get(config['zone'], ZONES['mitte'])
+    cx, cy = ZONES.get(zone, ZONES['mitte'])
     fit = lambda v: clamp(v, s / 2 + .02, 1 - s / 2 - .02)
-    return fit(cx) - s / 2, fit(cy) - s / 2, s
+    return fit(cx) - s / 2, fit(cy) - s / 2, s, s
 
 
 PINCH_ON, PINCH_OFF = .30, .48  # Abstand Daumen–Fingerspitze relativ zur Handgröße
@@ -237,6 +260,8 @@ class Gestures:
         self.toggled = -9.0
         self.pumps = collections.deque(maxlen=3)  # Zeitpunkte der letzten Faust-Schlüsse
         self.hand_open = None
+        self.calibrating = False   # Kalibrierung offen: nur die Handposition melden, die Maus bleibt in Ruhe
+        self.raw = None            # Handmitte im Kamerabild (0..1), für die Kalibrierung
         self._idle()
 
     def _idle(self):
@@ -327,7 +352,15 @@ class Gestures:
             if self.present and now - self.seen > GRACE:
                 self.release()
             return {'held': True} if self.present else None
-        self.present, self.seen = True, now
+        self.present, self.seen, self.raw = True, now, hand['c']
+        if self.calibrating:
+            if self.left and self.act:
+                mouse_event(LEFTUP)
+            self.left = self.right = self.scrolling = self.dragging = False
+            self.curl = None
+            if self.mover:
+                self.mover.idle()
+            return {'calibrating': True, 'raw': hand['c']}
         lm = hand['lm']
         size = max(dist(lm[0], lm[9]), dist(lm[5], lm[17]) * 1.25) or 1e-6
         # Streckung je Finger: ~2 = gestreckt, unter 1 = in die Handfläche eingerollt
@@ -349,9 +382,9 @@ class Gestures:
         # Eine Faust oder eine sich gerade schließende/öffnende Hand ist kein Kneifen
         may = lambda tip: curl[tip] >= .95 and not closing
 
-        x0, y0, s = zone_rect()
-        hx = self.fx(clamp((hand['c'][0] - x0) / s, 0, 1), now)
-        hy = self.fy(clamp((hand['c'][1] - y0) / s, 0, 1), now)
+        x0, y0, zw, zh = zone_rect()
+        hx = self.fx(clamp((hand['c'][0] - x0) / zw, 0, 1), now)
+        hy = self.fy(clamp((hand['c'][1] - y0) / zh, 0, 1), now)
 
         # Linksklick: Daumen + Zeige- oder Mittelfinger (halten und bewegen = ziehen)
         if self.left:
@@ -476,6 +509,7 @@ class Tracker(threading.Thread):
         self.mover = Mover()
         self.gestures = Gestures(self.mover)
         self.status = None
+        self.want_calibration = threading.Event()  # vom Menü/Hotkey gesetzt, vom Ring-Thread (Tk) abgeholt
 
     def set_status(self, status):
         if status != self.status:
@@ -522,7 +556,7 @@ class Tracker(threading.Thread):
             if seen:
                 last_hand = now
             self.set_status('gestoppt' if self.gestures.stopped else 'aktiv' if seen else 'suche')
-            if not seen:
+            if not seen and not self.gestures.calibrating:
                 if now - last_hand > 3:
                     time.sleep(.15)  # ohne Hand nur ein paar Mal pro Sekunde nachsehen
         if cap:
@@ -547,7 +581,8 @@ class Ring(threading.Thread):
 
     def state(self):
         g = self.tracker.gestures
-        if self.tracker.paused or not config['ring'] or not g.present or self.tracker.mover.yielding():
+        if (self.tracker.paused or g.calibrating or not config['ring'] or not g.present
+                or self.tracker.mover.yielding()):
             return None
         if g.stopped:  # kurz rot aufleuchten, dann verschwinden
             return 'stop' if g.t - g.toggled < 1.5 else None
@@ -577,6 +612,10 @@ class Ring(threading.Thread):
                 if self.tracker.stop_event.is_set():
                     root.destroy()
                     return
+                if self.tracker.want_calibration.is_set():
+                    self.tracker.want_calibration.clear()
+                    if not self.tracker.gestures.calibrating:
+                        Calibration(root, self.tracker)
                 state = self.state()
                 if state:
                     x, y = cursor_pos()
@@ -593,6 +632,237 @@ class Ring(threading.Thread):
             root.mainloop()
         except Exception as e:  # ohne Ring läuft HandMaus trotzdem weiter
             self.error = e
+
+
+class Calibration:
+    """Vollbild-Fenster zum Festlegen des Bereichs, in dem die Hand den ganzen Bildschirm abdeckt.
+
+    Das Rechteck in der Mitte steht für das Kamerabild, der Punkt für deine Hand (das Kamerabild selbst wird
+    nie gezeigt). Den Kasten zieht man mit der echten Maus auf, verschiebt oder vergrößert ihn an den Ecken –
+    oder lässt ihn aus einer Handbewegung bestimmen. Je kleiner der Kasten, desto weniger muss sich die Hand
+    bewegen und desto schneller läuft der Zeiger. So kann die Hand z. B. aufgestützt bleiben.
+    """
+    BG, CAM, BOX, HANDLE, TEXT, MUTED = '#0a0d13', '#121722', '#35a8ff', '#ffffff', '#e7ecf5', '#8e9ab3'
+    COUNTDOWN, RECORD = 2.0, 5.0  # Sekunden: Vorlauf und Aufnahmedauer beim Festlegen mit der Hand
+
+    def __init__(self, root, tracker):
+        import tkinter as tk
+        self.tk, self.tracker, self.g = tk, tracker, tracker.gestures
+        tracker.paused = False
+        self.g.stopped = False
+        self.g.calibrating = True
+        self.rect = list(zone_rect())
+        self.drag = None
+        self.record = None  # Startzeit beim Festlegen mit der Hand
+        self.points = []
+        self.trail = collections.deque(maxlen=40)
+
+        self.win = win = tk.Toplevel(root)
+        win.overrideredirect(True)
+        win.attributes('-topmost', True)
+        win.attributes('-alpha', .94)
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f'{sw}x{sh}+0+0')
+        self.canvas = c = tk.Canvas(win, width=sw, height=sh, bg=self.BG, highlightthickness=0, cursor='crosshair')
+        c.pack()
+        # Kamerabild (4:3) so groß wie möglich, oben und unten bleibt Platz für Text und Knöpfe
+        ah = sh - 300
+        aw = min(sw - 80, ah * 4 / 3)
+        ah = aw * 3 / 4
+        self.area = ((sw - aw) / 2, 160 + (sh - 300 - ah) / 2, aw, ah)
+        ax, ay = self.area[:2]
+        c.create_rectangle(ax, ay, ax + aw, ay + ah, fill=self.CAM, outline='#232b3d', width=2)
+        c.create_text(ax + 12, ay + 10, anchor='nw', fill=self.MUTED, font=('Segoe UI', 11),
+                      text='Kamerabild (gespiegelt) – das Bild selbst wird nie angezeigt')
+        c.create_text(sw / 2, 40, fill=self.TEXT, font=('Segoe UI', 22, 'bold'), text='HandMaus kalibrieren')
+        c.create_text(sw / 2, 88, fill=self.MUTED, font=('Segoe UI', 12), justify='center', width=sw - 60,
+                      text='Ziehe mit der Maus einen Kasten dort auf, wo du deine Hand bewegen willst. '
+                           'Verschieben: in den Kasten klicken und ziehen · Größe ändern: an den Ecken ziehen.\n'
+                           'Je kleiner der Kasten, desto schneller der Zeiger – die Hand kann dann aufgestützt '
+                           'bleiben und muss nur wenig bewegt werden.')
+        self.box = c.create_rectangle(0, 0, 0, 0, outline=self.BOX, width=3, fill='#35a8ff', stipple='gray12')
+        self.handles = [c.create_rectangle(0, 0, 0, 0, fill=self.HANDLE, outline=self.BOX, width=2) for _ in range(4)]
+        self.trail_line = c.create_line(0, 0, 0, 0, fill='#2ecc71', width=2, smooth=True)
+        self.dot = c.create_oval(0, 0, 0, 0, fill='#2ecc71', outline='white', width=2)
+        self.info = c.create_text(sw / 2, ay + ah + 26, fill=self.TEXT, font=('Segoe UI', 13))
+        self.status = c.create_text(sw / 2, ay - 24, fill='#ff9f1c', font=('Segoe UI', 14, 'bold'))
+
+        buttons = [('Mit der Hand festlegen  (H)', self.start_record, '#b06bff'),
+                   ('Zurücksetzen  (R)', self.reset, '#3a455e'),
+                   ('Abbrechen  (Esc)', self.cancel, '#3a455e'),
+                   ('Speichern  (Enter)', self.save, '#2ecc71')]
+        x = sw / 2 - 2 * 250 + 125
+        for text, cmd, color in buttons:
+            b = tk.Button(win, text=text, command=cmd, bg=color, fg='white' if color != '#2ecc71' else '#06101c',
+                          activebackground=color, relief='flat', font=('Segoe UI', 12, 'bold'), padx=14, pady=8,
+                          cursor='hand2', borderwidth=0)
+            c.create_window(x, sh - 50, window=b, width=230)
+            x += 250
+
+        c.bind('<ButtonPress-1>', self.press)
+        c.bind('<B1-Motion>', self.motion)
+        c.bind('<ButtonRelease-1>', self.release)
+        win.bind('<Escape>', lambda e: self.cancel())
+        win.bind('<Return>', lambda e: self.save())
+        for key in 'hH':
+            win.bind(key, lambda e: self.start_record())
+        for key in 'rR':
+            win.bind(key, lambda e: self.reset())
+        win.lift()
+        win.focus_force()
+        self.redraw()
+        self.tick()
+
+    # Umrechnung Kamerabild (0..1) <-> Bildschirm
+    def to_px(self, u, v):
+        ax, ay, aw, ah = self.area
+        return ax + u * aw, ay + v * ah
+
+    def to_norm(self, x, y):
+        ax, ay, aw, ah = self.area
+        return clamp((x - ax) / aw, 0, 1), clamp((y - ay) / ah, 0, 1)
+
+    def corners(self):
+        x, y, w, h = self.rect
+        return [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
+
+    def redraw(self):
+        x, y, w, h = self.rect
+        x0, y0 = self.to_px(x, y)
+        x1, y1 = self.to_px(x + w, y + h)
+        self.canvas.coords(self.box, x0, y0, x1, y1)
+        for handle, (u, v) in zip(self.handles, self.corners()):
+            px, py = self.to_px(u, v)
+            self.canvas.coords(handle, px - 7, py - 7, px + 7, py + 7)
+        speed = (SIZES['normal'] / w + SIZES['normal'] / h) / 2
+        self.canvas.itemconfig(self.info, text=f'Zeiger-Tempo ungefähr {speed:.1f}×  (Standard = 1.0×)   ·   '
+                                               f'Kasten: {w * 100:.0f} % × {h * 100:.0f} % des Kamerabilds')
+
+    def press(self, e):
+        if self.record:
+            return
+        u, v = self.to_norm(e.x, e.y)
+        x, y, w, h = self.rect
+        for i, (cu, cv) in enumerate(self.corners()):
+            px, py = self.to_px(cu, cv)
+            if abs(px - e.x) < 16 and abs(py - e.y) < 16:  # Ecke: die gegenüberliegende Ecke bleibt fest
+                self.drag = ('new', self.corners()[3 - i], list(self.rect))
+                return
+        if x <= u <= x + w and y <= v <= y + h:
+            self.drag = ('move', (u - x, v - y), list(self.rect))
+        else:
+            self.drag = ('new', (u, v), list(self.rect))
+
+    def motion(self, e):
+        if not self.drag:
+            return
+        u, v = self.to_norm(e.x, e.y)
+        mode, ref, _ = self.drag
+        if mode == 'move':
+            w, h = self.rect[2:]
+            self.rect = [clamp(u - ref[0], 0, 1 - w), clamp(v - ref[1], 0, 1 - h), w, h]
+        else:
+            self.rect = [min(u, ref[0]), min(v, ref[1]), abs(u - ref[0]), abs(v - ref[1])]
+        self.redraw()
+
+    def release(self, e):
+        if self.drag and (self.rect[2] < MIN_ZONE or self.rect[3] < MIN_ZONE):
+            self.rect = self.drag[2]  # zu klein (z. B. nur geklickt): alten Kasten behalten
+            self.flash('Der Kasten war zu klein – bitte größer aufziehen.')
+        self.drag = None
+        self.redraw()
+
+    def flash(self, text, ms=2500):
+        self.canvas.itemconfig(self.status, text=text)
+        self.win.after(ms, lambda: self.record or self.canvas.itemconfig(self.status, text=''))
+
+    def start_record(self):
+        if not self.record:
+            self.record, self.points = time.perf_counter(), []
+
+    def finish_record(self):
+        self.record = None
+        if len(self.points) < 10:
+            self.flash('Keine Hand erkannt – halte die Hand ins Bild und versuche es noch einmal.', 4000)
+            return
+        xs, ys = sorted(p[0] for p in self.points), sorted(p[1] for p in self.points)
+        cut = len(xs) // 40  # einzelne Ausreißer ignorieren
+        x0, x1, y0, y1 = xs[cut], xs[-1 - cut], ys[cut], ys[-1 - cut]
+        # etwas verkleinern, damit die Bildschirmränder bequem erreichbar sind
+        mx, my = (x1 - x0) * .06, (y1 - y0) * .06
+        x0, x1, y0, y1 = x0 + mx, x1 - mx, y0 + my, y1 - my
+        w, h = max(x1 - x0, MIN_ZONE), max(y1 - y0, MIN_ZONE)
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        self.rect = [clamp(cx - w / 2, 0, 1 - w), clamp(cy - h / 2, 0, 1 - h), w, h]
+        self.redraw()
+        self.flash('Bereich übernommen – mit „Speichern“ bestätigen oder mit der Maus anpassen.', 5000)
+
+    def reset(self):
+        if not self.record:
+            self.rect = list(zone_rect('mitte' if config['zone'] == 'eigen' else config['zone']))
+            self.redraw()
+
+    def tick(self):
+        if self.tracker.stop_event.is_set():
+            self.close()
+            return
+        now = time.perf_counter()
+        hand = self.g.raw if self.g.present and now - self.g.seen < .4 else None
+        if hand:
+            self.trail.append(self.to_px(*hand))
+            px, py = self.trail[-1]
+            x, y, w, h = self.rect
+            inside = x <= hand[0] <= x + w and y <= hand[1] <= y + h
+            color = '#2ecc71' if inside else '#ff9f1c'
+            self.canvas.coords(self.dot, px - 11, py - 11, px + 11, py + 11)
+            self.canvas.itemconfig(self.dot, fill=color, state='normal')
+            if len(self.trail) > 1:
+                self.canvas.coords(self.trail_line, *[v for p in self.trail for v in p])
+                self.canvas.itemconfig(self.trail_line, state='normal')
+        else:
+            self.trail.clear()
+            self.canvas.itemconfig(self.dot, state='hidden')
+            self.canvas.itemconfig(self.trail_line, state='hidden')
+        if self.record:
+            t = now - self.record
+            if t < self.COUNTDOWN:
+                text = f'Gleich geht es los … {self.COUNTDOWN - t:.0f}  –  Hand in die Ausgangsposition'
+            elif t < self.COUNTDOWN + self.RECORD:
+                if hand:
+                    self.points.append(hand)
+                text = (f'Bewege die Hand jetzt bequem in alle Richtungen, so weit du willst … '
+                        f'{self.COUNTDOWN + self.RECORD - t:.0f}')
+            else:
+                text = ''
+                self.finish_record()
+            if self.record:
+                self.canvas.itemconfig(self.status, text=text)
+        elif not hand and not self.canvas.itemcget(self.status, 'text'):
+            self.canvas.itemconfig(self.status, text='Keine Hand im Bild')
+        elif hand and self.canvas.itemcget(self.status, 'text') == 'Keine Hand im Bild':
+            self.canvas.itemconfig(self.status, text='')
+        self.win.after(30, self.tick)
+
+    def save(self):
+        if self.record:
+            return
+        config['custom'] = [round(v, 4) for v in self.rect]
+        config['zone'] = 'eigen'
+        save_config()
+        self.close()
+
+    def cancel(self):
+        self.close()
+
+    def close(self):
+        self.g.calibrating = False
+        self.g.reset_lock()
+        self.g.fx.reset()
+        self.g.fy.reset()
+        try:
+            self.win.destroy()
+        except self.tk.TclError:
+            pass
 
 
 # ---------- Infobereich (Tray) ----------
@@ -645,14 +915,41 @@ def open_guide(*_):
         pass
 
 
-def hotkey_loop(callback):
-    """Strg + Alt + H schaltet Pause um."""
-    if not user32.RegisterHotKey(None, 1, 0x0001 | 0x0002, 0x48):
-        return
-    msg = wintypes.MSG()
-    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-        if msg.message == 0x0312:
-            callback()
+WM_HOTKEY, WM_REBIND = 0x0312, 0x8001  # WM_REBIND (WM_APP + 1): Kalibrier-Taste neu anmelden
+
+
+class Hotkeys(threading.Thread):
+    """Globale Tasten: Strg + Alt + H schaltet Pause um, die einstellbare Kalibrier-Taste öffnet die Kalibrierung."""
+
+    def __init__(self, on_pause, on_calibrate):
+        super().__init__(daemon=True)
+        self.on_pause, self.on_calibrate = on_pause, on_calibrate
+        self.thread_id = None
+        self.ready = threading.Event()
+        self.calib_ok = True  # False, wenn die Taste schon von einem anderen Programm belegt ist
+
+    def _bind_calibration(self):
+        user32.UnregisterHotKey(None, 2)
+        _, mods, vk = CALIB_KEYS.get(config['calib_key'], CALIB_KEYS['strg_alt_k'])
+        self.calib_ok = not vk or bool(user32.RegisterHotKey(None, 2, mods | MOD_NOREPEAT, vk))
+
+    def rebind(self):
+        """Nach dem Ändern der Kalibrier-Taste aufrufen (aus jedem Thread)."""
+        if self.ready.wait(2) and self.thread_id:
+            user32.PostThreadMessageW(self.thread_id, WM_REBIND, 0, 0)
+
+    def run(self):
+        self.thread_id = kernel32.GetCurrentThreadId()
+        msg = wintypes.MSG()
+        user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # Nachrichtenschlange anlegen
+        user32.RegisterHotKey(None, 1, MOD_CTRL | MOD_ALT | MOD_NOREPEAT, 0x48)
+        self._bind_calibration()
+        self.ready.set()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == WM_HOTKEY:
+                (self.on_pause if msg.wParam == 1 else self.on_calibrate)()
+            elif msg.message == WM_REBIND:
+                self._bind_calibration()
 
 
 def main():
@@ -680,16 +977,34 @@ def main():
         tracker.gestures.stopped = False
         icon.update_menu()
 
+    def calibrate(*_):
+        tracker.want_calibration.set()
+
+    hotkeys = Hotkeys(toggle_pause, calibrate)
+
     def toggle_ring(*_):
         config['ring'] = not config['ring']
         save_config()
 
     def choose(key, value):
         def action(*_):
+            if key == 'zone' and value == 'eigen' and not custom_rect():
+                calibrate()  # noch kein eigener Bereich: erst kalibrieren, Speichern wählt ihn dann aus
+                return
             config[key] = value
             tracker.gestures.reset_lock()
             save_config()
+            if key == 'calib_key':
+                hotkeys.rebind()
+                time.sleep(.2)  # kurz warten, ob die Taste angemeldet werden konnte
+                if not hotkeys.calib_ok:
+                    user32.MessageBoxW(0, f'Die Taste {CALIB_KEYS[value][0]} wird schon von einem anderen Programm '
+                                          'benutzt. Bitte wähle eine andere.', APP, 0x30)
         return action
+
+    def calib_label(item):
+        name = CALIB_KEYS.get(config['calib_key'], CALIB_KEYS['strg_alt_k'])[0]
+        return 'Kalibrieren …' if config['calib_key'] == 'aus' else f'Kalibrieren …  ({name})'
 
     def radio(key, names):
         return pystray.Menu(*[pystray.MenuItem(text, choose(key, value), radio=True,
@@ -707,6 +1022,8 @@ def main():
         pystray.MenuItem('Hand', radio('hand', HAND_NAMES)),
         pystray.MenuItem('Steuerzone', radio('zone', ZONE_NAMES)),
         pystray.MenuItem('Bewegung', radio('size', SIZE_NAMES)),
+        pystray.MenuItem(calib_label, calibrate),
+        pystray.MenuItem('Taste für Kalibrieren', radio('calib_key', {k: v[0] for k, v in CALIB_KEYS.items()})),
         pystray.MenuItem('Kamera', radio('camera', {0: 'Kamera 1', 1: 'Kamera 2', 2: 'Kamera 3'})),
         pystray.MenuItem('Ring um den Mauszeiger', toggle_ring, checked=lambda item: config['ring']),
         pystray.Menu.SEPARATOR,
@@ -722,7 +1039,7 @@ def main():
         icon.visible = True
         tracker.start()
         Ring(tracker).start()
-        threading.Thread(target=hotkey_loop, args=(toggle_pause,), daemon=True).start()
+        hotkeys.start()
         if not config['guide_seen']:  # beim ersten Start einmal die Anleitung zeigen
             config['guide_seen'] = True
             save_config()
